@@ -1,6 +1,10 @@
 import type { Port, PortId } from './types';
 
-/** The Halcyon system. Positions are in flight-view pixels. */
+/**
+ * The Halcyon system. Positions are in flight-view pixels.
+ * Fuel is the biggest running cost, so pump prices are spread wide on purpose: the mining camp is the place
+ * to brim the tank, and the Lantern charges for being the only pump at the edge of the charts.
+ */
 export const PORTS: readonly Port[] = [
   {
     id: 'kestrel',
@@ -8,7 +12,7 @@ export const PORTS: readonly Port[] = [
     x: 0,
     y: 0,
     blurb: 'Ring station over Ossa. Customs is slow, the coffee is decent.',
-    fuelPrice: 2,
+    fuelPrice: 2.4,
     dockFee: 20,
     mix: [70, 25, 5],
   },
@@ -18,7 +22,7 @@ export const PORTS: readonly Port[] = [
     x: 2400,
     y: -700,
     blurb: "Farm moon. Everyone knows everyone, and everyone's cargo.",
-    fuelPrice: 2.4,
+    fuelPrice: 2.8,
     dockFee: 10,
     mix: [60, 30, 10],
   },
@@ -28,7 +32,7 @@ export const PORTS: readonly Port[] = [
     x: -900,
     y: 1900,
     blurb: 'Mining camp bolted to a rock. Pays in scrip when it can get away with it.',
-    fuelPrice: 1.6,
+    fuelPrice: 1.2,
     dockFee: 15,
     mix: [35, 45, 20],
   },
@@ -38,7 +42,7 @@ export const PORTS: readonly Port[] = [
     x: 1900,
     y: 2300,
     blurb: "Relay beacon at the edge of the charts. Nobody asks what you're hauling.",
-    fuelPrice: 3,
+    fuelPrice: 3.6,
     dockFee: 5,
     mix: [15, 35, 50],
   },

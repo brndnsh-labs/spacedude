@@ -1,22 +1,40 @@
-import { generateBoard, round5 } from './jobs';
+import { RISK, generateBoard, round5 } from './jobs';
 import { rand } from './rng';
 import type { FlightInput, GameState, Job, PortId, ReportLine, Result } from './types';
-import { PORTS, port } from './world';
+import { PORTS, distance, port } from './world';
 
+/**
+ * Flight feel (turnRate, accel, drag, brakeDrag, dockRadius, dockSpeed) is tuned by hand: leave it alone.
+ * Everything about money and fuel is tuned with the balance harness: run `npm run balance` after touching it.
+ */
 export const TUNING = {
   turnRate: 3.2, // rad/s
   accel: 60, // px/s^2; top speed is accel / drag
   drag: 0.5,
   brakeDrag: 2.2,
-  burn: 1.4, // fuel per second of thrust
+  /** Fuel per second of thrust. The longest leg (Dry Hollow - Marrow's Rest) takes about 68 of a stock 100 tank. */
+  burn: 1.9,
   secondsPerDay: 10,
-  upkeepPerDay: 10,
+  /** Crew shares and air. With fuel, this is what a trip has to earn back: about 170 cr for an average leg. */
+  upkeepPerDay: 20,
   dockRadius: 70,
   dockSpeed: 45,
   towFee: 120,
+  /** px/s. A tow moves at stock cruising speed and the clock runs for it, so running dry is never a shortcut. */
+  towSpeed: 120,
   strandedSeconds: 2.5,
+  startCredits: 100,
+  /** How far the tab stretches. Nothing ever takes the balance below this. */
   creditFloor: -500,
   lateFactor: 0.6,
+  /** Spare fuel on top of the nav estimate when a port fronts a broke captain enough to leave. */
+  limpMargin: 4,
+  /** The stock ship, and what each upgrade level adds. */
+  cargo: 12,
+  cargoStep: 6,
+  tank: 100,
+  tankStep: 60,
+  engineStep: 0.12,
 } as const;
 
 /** Ships berth at the tip of a station's docking arm, this far left of its centre. */
@@ -24,19 +42,27 @@ export const ARM = 58;
 
 export type UpgradeId = 'cargo' | 'tank' | 'engine';
 export const UPGRADES: readonly { id: UpgradeId; name: string; effect: string; costs: readonly number[] }[] = [
-  { id: 'cargo', name: 'Cargo racks', effect: '+6 t hold', costs: [500, 900, 1500] },
-  { id: 'tank', name: 'Aux fuel tank', effect: '+40 fuel', costs: [400, 700, 1100] },
-  { id: 'engine', name: 'Engine tune', effect: '+12% speed', costs: [650, 1100, 1800] },
+  // Priced by what the harness says each is worth: the dearer the fitting, the faster it earns its keep.
+  { id: 'cargo', name: 'Cargo racks', effect: `+${TUNING.cargoStep} t hold`, costs: [1200, 1400, 1700] },
+  { id: 'tank', name: 'Aux fuel tank', effect: `+${TUNING.tankStep} fuel`, costs: [600, 650, 700] },
+  { id: 'engine', name: 'Engine tune', effect: `+${Math.round(TUNING.engineStep * 100)}% speed`, costs: [750, 900, 1100] },
 ];
 
-export const cargoMax = (s: GameState) => 12 + 6 * s.upgrades.cargo;
-export const fuelMax = (s: GameState) => 100 + 40 * s.upgrades.tank;
-export const accelOf = (s: GameState) => TUNING.accel * (1 + 0.12 * s.upgrades.engine);
+export const cargoMax = (s: GameState) => TUNING.cargo + TUNING.cargoStep * s.upgrades.cargo;
+export const fuelMax = (s: GameState) => TUNING.tank + TUNING.tankStep * s.upgrades.tank;
+export const accelOf = (s: GameState) => TUNING.accel * (1 + TUNING.engineStep * s.upgrades.engine);
 export const topSpeed = (s: GameState) => accelOf(s) / TUNING.drag;
 export const holdTons = (s: GameState) => s.hold.reduce((t, j) => t + j.tons, 0);
 export const speedOf = (s: GameState) => Math.hypot(s.ship.vx, s.ship.vy);
 /** Fuel a cruise of this distance takes, with a little margin. */
 export const fuelFor = (s: GameState, dist: number) => Math.ceil((dist / topSpeed(s)) * TUNING.burn * 1.1);
+
+/**
+ * The least fuel that reaches any other port from here. A docked ship can always get at least this much,
+ * however deep its tab, so there is always a way to take a job and deliver it.
+ */
+export const limpFuel = (s: GameState, from: PortId) =>
+  Math.min(fuelMax(s), Math.max(...PORTS.map(p => fuelFor(s, distance(from, p.id)))) + TUNING.limpMargin);
 
 const ok = (msg: string): Result => ({ ok: true, msg });
 const fail = (msg: string): Result => ({ ok: false, msg });
@@ -49,12 +75,13 @@ export function newGame(seed: number): GameState {
     day: 1,
     dayFrac: 0,
     lastUpkeepDay: 1,
-    credits: 300,
+    credits: TUNING.startCredits,
     docked: 'kestrel',
     target: null,
-    ship: { x: home.x - ARM, y: home.y, vx: 0, vy: 0, angle: 0, fuel: 100 },
+    ship: { x: home.x - ARM, y: home.y, vx: 0, vy: 0, angle: 0, fuel: TUNING.tank },
     upgrades: { cargo: 0, tank: 0, engine: 0 },
     boards: {} as Record<PortId, Job[]>,
+    boardDay: {},
     hold: [],
     report: [
       { text: "She's not much, but she's yours. Tank's full." },
@@ -63,8 +90,13 @@ export function newGame(seed: number): GameState {
     stranded: 0,
     stats: { delivered: 0, earned: 0 },
   };
-  for (const p of PORTS) state.boards[p.id] = generateBoard(state, p.id);
+  for (const p of PORTS) postBoard(state, p.id);
   return state;
+}
+
+function postBoard(state: GameState, id: PortId): void {
+  state.boards[id] = generateBoard(state, id);
+  (state.boardDay ??= {})[id] = state.day;
 }
 
 export function acceptJob(state: GameState, jobId: number): Result {
@@ -85,13 +117,22 @@ export function buyFuel(state: GameState, units: number | 'fill'): Result {
   const price = port(state.docked).fuelPrice;
   const space = fuelMax(state) - state.ship.fuel;
   if (space < 0.5) return fail('Tank is full.');
-  const affordable = Math.floor((state.credits - TUNING.creditFloor) / price);
-  if (affordable <= 0) return fail("The harbormaster won't extend your tab any further.");
-  const u = Math.min(units === 'fill' ? space : units, space, affordable);
-  const cost = Math.ceil(u * price);
+  const want = Math.min(units === 'fill' ? space : units, space);
+  if (!(want > 0)) return fail('Nothing to pump.');
+  const tab = Math.max(0, state.credits - TUNING.creditFloor);
+  const paid = Math.min(want, Math.floor(tab / price));
+  // Nobody gets left on the dock. If the tab will not stretch to a tank that reaches the next port,
+  // the harbormaster fronts the difference.
+  const fronted = paid < want ? Math.min(space - paid, Math.max(0, limpFuel(state, state.docked) - state.ship.fuel - paid)) : 0;
+  if (paid + fronted <= 0) return fail("The harbormaster won't extend your tab any further.");
+  const cost = Math.min(Math.ceil(paid * price), tab);
   state.credits -= cost;
-  state.ship.fuel += u;
-  return ok(`Took on ${Math.round(u)} fuel for ${cost} cr.${state.credits < 0 ? ' It goes on your tab.' : ''}`);
+  state.ship.fuel += paid + fronted;
+  if (fronted > 0) {
+    const bought = paid > 0 ? `Took on ${Math.round(paid)} fuel for ${cost} cr, and that's the tab maxed. ` : "Tab's maxed. ";
+    return ok(`${bought}The harbormaster fronts you ${Math.round(fronted)} more to reach the next port. "Pay it forward."`);
+  }
+  return ok(`Took on ${Math.round(paid)} fuel for ${cost} cr.${state.credits < 0 ? ' It goes on your tab.' : ''}`);
 }
 
 export function upgradeCost(state: GameState, id: UpgradeId): number | null {
@@ -124,31 +165,54 @@ export function launch(state: GameState): Result {
   return ok('Clamps released.');
 }
 
+/** The fine an inspection of this shady job would cost. */
+export const fineFor = (job: Job) => round5(RISK.fineFlat + RISK.finePay * job.pay);
+
+/** Average credits a delivery brings in, net of fines, tips and short-changing clients. */
+export function expectedPay(job: Job, late: boolean): number {
+  const pay = late ? round5(job.pay * TUNING.lateFactor) : job.pay;
+  if (job.kind === 'legit') return pay + RISK.tipChance * round5(job.pay * RISK.tipFrac);
+  if (job.kind === 'grey') return pay - RISK.shortChance * (pay - round5(pay * RISK.shortKeep));
+  return pay - RISK.fineChance * fineFor(job);
+}
+
 function settle(state: GameState, job: Job): ReportLine[] {
   const lines: ReportLine[] = [];
   let pay = job.pay;
   let note = '';
-  if (state.day > job.due) {
+  const late = state.day > job.due;
+  if (late) {
     pay = round5(pay * TUNING.lateFactor);
     note = ' (late)';
   }
   const roll = rand(state);
-  if (job.kind === 'legit' && roll < 0.12) {
-    pay += round5(job.pay * 0.15);
+  if (job.kind === 'legit' && roll < RISK.tipChance) {
+    pay += round5(job.pay * RISK.tipFrac);
     note += ' (tipped)';
-  } else if (job.kind === 'grey' && roll < 0.18) {
-    pay = round5(pay * 0.7);
+  } else if (job.kind === 'grey' && roll < RISK.shortChance) {
+    pay = round5(pay * RISK.shortKeep);
     note += ' (client came up short)';
   }
-  lines.push({ text: `Delivered ${job.cargo.toLowerCase()}${note}`, amount: pay });
-  if (job.kind === 'shady' && roll < 0.22) lines.push({ text: 'Port authority "inspection fee"', amount: -150 });
+  lines.push({ text: `Delivered ${job.cargo.toLowerCase()}${note}`, amount: pay, tag: 'pay', job: job.kind, late });
+  if (job.kind === 'shady' && roll < RISK.fineChance) {
+    lines.push({ text: 'Port authority "inspection fee"', amount: -fineFor(job), tag: 'fine', job: job.kind });
+  }
   state.stats.delivered++;
   state.stats.earned += pay;
   return lines;
 }
 
-/** Dock at a port: deliver anything bound here, pay the fees, and refresh its job board. */
+/**
+ * Dock at a port: deliver anything bound here, pay the fees, and post a new job board if a day has turned.
+ * Docking where we are already berthed does nothing, so a caller that docks again after a tow
+ * (which has already berthed us) does not charge a second fee or wipe the tow off the arrival report.
+ */
 export function dock(state: GameState, id: PortId): void {
+  if (state.docked === id) return;
+  arrive(state, id, []);
+}
+
+function arrive(state: GameState, id: PortId, report: ReportLine[]): void {
   const p = port(id);
   state.docked = id;
   state.stranded = 0;
@@ -158,20 +222,25 @@ export function dock(state: GameState, id: PortId): void {
   state.ship.angle = 0;
   if (state.target === id) state.target = null;
 
-  const report: ReportLine[] = [];
   const arriving = state.hold.filter(j => j.to === id);
   state.hold = state.hold.filter(j => j.to !== id);
   for (const job of arriving) report.push(...settle(state, job));
-  report.push({ text: 'Docking fee', amount: -p.dockFee });
+  report.push({ text: 'Docking fee', amount: -p.dockFee, tag: 'fee' });
   const days = state.day - state.lastUpkeepDay;
   if (days > 0) {
-    report.push({ text: `Crew shares and air, ${days} day${days > 1 ? 's' : ''}`, amount: -days * TUNING.upkeepPerDay });
+    report.push({ text: `Crew shares and air, ${days} day${days > 1 ? 's' : ''}`, amount: -days * TUNING.upkeepPerDay, tag: 'upkeep' });
     state.lastUpkeepDay = state.day;
   }
   for (const line of report) state.credits += line.amount ?? 0;
+  // The tab only stretches so far. Past that the port eats the difference rather than bury a captain.
+  if (state.credits < TUNING.creditFloor) {
+    report.push({ text: `Tab's at its limit. The harbormaster waves off the rest`, amount: TUNING.creditFloor - state.credits, tag: 'writeoff' });
+    state.credits = TUNING.creditFloor;
+  }
   if (!state.target && state.hold.length) state.target = state.hold[0].to;
 
-  state.boards[id] = generateBoard(state, id);
+  // Boards turn over with the calendar, not with the airlock: casting off and docking again shows the same jobs.
+  if (state.boardDay?.[id] !== state.day) postBoard(state, id);
   state.report = report;
 }
 
@@ -197,10 +266,18 @@ export function atDock(state: GameState, id: PortId): boolean {
   return Math.hypot(p.x - ARM - state.ship.x, p.y - state.ship.y) < 16 && speedOf(state) < 20;
 }
 
+function passTime(state: GameState, seconds: number): void {
+  state.dayFrac += seconds / TUNING.secondsPerDay;
+  while (state.dayFrac >= 1) {
+    state.dayFrac -= 1;
+    state.day++;
+  }
+}
+
 function tow(state: GameState): void {
-  dock(state, nearestPort(state));
-  state.credits -= TUNING.towFee;
-  state.report.unshift({ text: 'Ran dry. Towed in by a passing hauler', amount: -TUNING.towFee });
+  const p = port(nearestPort(state));
+  passTime(state, Math.hypot(p.x - state.ship.x, p.y - state.ship.y) / TUNING.towSpeed);
+  arrive(state, p.id, [{ text: 'Ran dry. Towed in by a passing hauler', amount: -TUNING.towFee, tag: 'tow' }]);
 }
 
 /** Advance the flight by dt seconds. Returns 'towed' if we ran dry and got hauled to port. */
@@ -220,11 +297,7 @@ export function stepFlight(state: GameState, input: FlightInput, dt: number): 't
   s.x += s.vx * dt;
   s.y += s.vy * dt;
 
-  state.dayFrac += dt / TUNING.secondsPerDay;
-  while (state.dayFrac >= 1) {
-    state.dayFrac -= 1;
-    state.day++;
-  }
+  passTime(state, dt);
 
   // Nobody dies out here: an empty tank just means an embarrassing tow.
   if (s.fuel <= 0 && speedOf(state) < 6 && !dockable(state)) {

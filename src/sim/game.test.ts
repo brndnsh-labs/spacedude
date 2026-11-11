@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
-  ARM, TUNING, acceptJob, atDock, autopilot, buyFuel, buyUpgrade, cargoMax, dock, holdTons, launch, newGame, stepFlight,
+  ARM, TUNING, UPGRADES, acceptJob, atDock, autopilot, buyFuel, buyUpgrade, cargoMax, dock, fuelMax, holdTons, launch, newGame,
+  stepFlight,
 } from './game';
+import { BOARD } from './jobs';
 import type { GameState, PortId } from './types';
 import { PORTS, port } from './world';
 
@@ -20,7 +22,8 @@ describe('job boards', () => {
       for (const p of PORTS) {
         const board = s.boards[p.id];
         expect(board.length).toBeGreaterThanOrEqual(4);
-        expect(board.some(j => j.kind === 'legit' && j.tons <= 6)).toBe(true);
+        expect(board.some(j => j.kind === 'legit' && j.tons <= BOARD.starterMaxTons)).toBe(true);
+        expect(BOARD.starterMaxTons).toBeLessThanOrEqual(cargoMax(s));
         expect(board.every(j => j.to !== p.id && j.from === p.id && j.pay > 0)).toBe(true);
       }
     }
@@ -30,7 +33,7 @@ describe('job boards', () => {
 describe('taking work', () => {
   it('moves a job from the board to the hold and points the nav at it', () => {
     const s = newGame(1);
-    const job = s.boards.kestrel.find(j => j.tons <= 6)!;
+    const job = s.boards.kestrel.find(j => j.tons <= BOARD.starterMaxTons)!;
     expect(acceptJob(s, job.id).ok).toBe(true);
     expect(s.hold).toContain(job);
     expect(s.boards.kestrel).not.toContain(job);
@@ -57,7 +60,7 @@ describe('docking', () => {
     expect(s.stats.delivered).toBe(1);
     const paid = s.report.find(l => l.text.startsWith('Delivered'))!.amount!;
     expect(paid).toBeGreaterThanOrEqual(job.pay);
-    expect(s.credits).toBe(300 + paid - port(job.to).dockFee);
+    expect(s.credits).toBe(TUNING.startCredits + paid - port(job.to).dockFee);
   });
 
   it('pays less for late deliveries', () => {
@@ -75,21 +78,25 @@ describe('docking', () => {
 
 describe('money', () => {
   it('sells fuel on a tab, but only down to the credit floor', () => {
+    // A ship with enough aboard to reach the next port gets no charity (balance.test.ts covers the one that has not).
     const s = newGame(1);
-    s.ship.fuel = 0;
+    const price = port('kestrel').fuelPrice;
+    s.ship.fuel = 90;
     s.credits = TUNING.creditFloor + 10;
     expect(buyFuel(s, 'fill').ok).toBe(true);
-    expect(s.ship.fuel).toBe(5);
-    expect(s.credits).toBe(TUNING.creditFloor);
+    expect(s.ship.fuel).toBe(90 + Math.floor(10 / price));
+    expect(s.credits).toBeGreaterThanOrEqual(TUNING.creditFloor);
+    expect(s.credits).toBeLessThan(TUNING.creditFloor + price);
     expect(buyFuel(s, 'fill').ok).toBe(false);
   });
 
   it('fits upgrades only when you can pay', () => {
     const s = newGame(1);
+    const cost = UPGRADES.find(u => u.id === 'cargo')!.costs[0];
     expect(buyUpgrade(s, 'cargo').ok).toBe(false);
-    s.credits = 500;
+    s.credits = cost;
     expect(buyUpgrade(s, 'cargo').ok).toBe(true);
-    expect(cargoMax(s)).toBe(18);
+    expect(cargoMax(s)).toBe(TUNING.cargo + TUNING.cargoStep);
     expect(s.credits).toBe(0);
   });
 });
@@ -104,7 +111,8 @@ describe('flight', () => {
         launch(s);
         const t = flyTo(s, to.id, 90);
         expect(t, `${from.id} -> ${to.id}`).toBeLessThan(60);
-        expect(100 - s.ship.fuel).toBeLessThan(60);
+        // Fuel is dearer to burn than it was, but the longest leg still leaves a quarter of a stock tank spare.
+        expect(fuelMax(s) - s.ship.fuel).toBeLessThan(0.75 * fuelMax(s));
       }
     }
   });

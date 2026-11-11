@@ -46,6 +46,11 @@ export interface Upgrades {
 export interface ReportLine {
   text: string;
   amount?: number;
+  /** What the line is for. Optional, so reports in old saves still load; the balance harness reads it. */
+  tag?: 'pay' | 'fine' | 'fee' | 'upkeep' | 'tow' | 'writeoff';
+  /** For 'pay' and 'fine' lines: the kind of job, and whether it came in late. */
+  job?: JobKind;
+  late?: boolean;
 }
 
 export interface GameState {
@@ -61,6 +66,8 @@ export interface GameState {
   ship: Ship;
   upgrades: Upgrades;
   boards: Record<PortId, Job[]>;
+  /** The day each port's board was last posted. Optional: saves from before it existed just get fresh boards. */
+  boardDay?: Partial<Record<PortId, number>>;
   hold: Job[];
   /** What happened the last time we docked. */
   report: ReportLine[];
