@@ -203,8 +203,10 @@ export class FlightView {
         const along = Math.abs(dx * cos + dy * sin), across = Math.abs(-dx * sin + dy * cos);
         const spread = along * 0.2 + 1.5;
         if (along < 13 || along > reach || across > spread) continue;
-        const power = (1 - along / reach) ** 1.5 * (1 - across / spread);
-        if (power * 1.1 <= bay(x, y)) continue;
+        // The lamp housing hides the first stretch, so the beam has to stay strong well out from it:
+        // a near-solid core that thins to dither at its edges and far end.
+        const power = (1 - along / reach) * (1 - across / spread);
+        if (power * 1.7 <= bay(x, y)) continue;
         g.fillStyle = power > 0.55 ? '#fff3c4' : power > 0.3 ? '#eab668' : '#7a4a4a';
         g.fillRect(x, y, 1, 1);
       }
