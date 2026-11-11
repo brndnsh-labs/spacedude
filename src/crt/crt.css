@@ -1,0 +1,31 @@
+/*
+ * The CRT filter's two layers. Neither is in the page while the filter is off (see index.ts), so nothing here
+ * can touch the game then.
+ */
+
+/* The filtered picture: exactly over the game canvas, under the HUD and terminal that follow it in the stage. */
+.crt-screen { position: absolute; inset: 0; width: 100%; height: 100%; display: block; pointer-events: none; }
+
+/* The glass: over everything in the stage, and the pointer goes straight through it. */
+.crt-glass { position: absolute; inset: 0; z-index: 1000; overflow: hidden; pointer-events: none; }
+
+/* Scanlines for the DOM layers: one device pixel wide, one pixel per output row, stretched across. */
+.crt-lines { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+
+/* The vignette, and a faint reflection of the room across the top left. */
+.crt-glass::before {
+  content: ""; position: absolute; inset: 0;
+  background:
+    linear-gradient(155deg, rgb(255 255 255 / var(--crt-sheen)) 0%, rgb(255 255 255 / calc(var(--crt-sheen) * .3)) 24%, rgb(255 255 255 / 0) 46%),
+    radial-gradient(ellipse 71% 71% at 50% 50%,
+      rgb(0 0 0 / 0) 55%,
+      rgb(0 0 0 / calc(var(--crt-vignette) * .07)) 72%,
+      rgb(0 0 0 / calc(var(--crt-vignette) * .32)) 88%,
+      rgb(0 0 0 / var(--crt-vignette)) 100%);
+}
+
+/* The tube's rounded corners: a rounded hole in a wide, dark frame that the stage clips to four corner pieces. */
+.crt-glass::after {
+  content: ""; position: absolute; inset: 0; border-radius: var(--crt-corner);
+  box-shadow: 0 0 0 10cqw #07060a, inset 0 0 .5cqw .1cqw rgb(0 0 0 / .45);
+}
