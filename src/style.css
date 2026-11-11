@@ -5,28 +5,71 @@ body { display: grid; place-items: center; }
 #stage { position: relative; container-type: inline-size; background: #1a1423; overflow: hidden; }
 #view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
 
-/* ---------- flight HUD (dusty pixel) ---------- */
-#hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Pixelify Sans', ui-monospace, monospace; color: #f2e9dc; font-size: 3.3cqw; line-height: 1; text-transform: uppercase; }
+/* ---------- HUD: brass-framed panels on the pixel grid ---------- */
+/* --px is one art pixel in stage units, so every edge here lands on the same grid as the pixel art. */
+#hud { --px: calc(100cqw / 480); position: absolute; inset: 0; pointer-events: none; font-family: 'Pixelify Sans', ui-monospace, monospace; color: #f6efd9; font-size: calc(var(--px) * 11); line-height: 1; text-transform: uppercase; text-shadow: var(--px) var(--px) 0 #15121f; }
 #hud[hidden] { display: none; }
-.h-box { position: absolute; background: #1a1423; border: .6cqw solid #eab668; padding: 1cqw 1.6cqw; box-shadow: .6cqw .6cqw 0 #0009; display: flex; align-items: center; gap: 1.6cqw; white-space: nowrap; }
-.h-tl { left: 2.5cqw; top: 2.5cqw; }
-.h-tr { right: 2.5cqw; top: 2.5cqw; }
-.h-br { right: 2.5cqw; bottom: 2.5cqw; }
-.h-prompt { left: 50%; transform: translateX(-50%); border-color: #7fd1c7; flex-direction: column; align-items: flex-start; gap: .7cqw; }
+/* a panel: dark glass, a two-tone brass frame, an ink outline and a hard drop shadow */
+.h-box { position: absolute; display: flex; align-items: center; gap: calc(var(--px) * 5); white-space: nowrap; padding: calc(var(--px) * 5) calc(var(--px) * 7);
+  background: linear-gradient(to bottom, #2b1f3b 0 calc(var(--px) * 3), #241a35 calc(var(--px) * 3) 55%, #1a1423 55%);
+  box-shadow: inset var(--px) var(--px) 0 #f8dc98, inset calc(var(--px) * -1) calc(var(--px) * -1) 0 #b5683f, inset 0 0 0 calc(var(--px) * 2) #eab668,
+    inset calc(var(--px) * 3) calc(var(--px) * 3) 0 #15121f, 0 0 0 var(--px) #15121f, calc(var(--px) * 2) calc(var(--px) * 3) 0 var(--px) #07060a99; }
+.h-tl { left: calc(var(--px) * 8); top: calc(var(--px) * 8); }
+.h-tr { right: calc(var(--px) * 8); top: calc(var(--px) * 8); }
+.h-br { right: calc(var(--px) * 8); bottom: calc(var(--px) * 8); line-height: 1.25; }
+.h-br small { font-size: calc(var(--px) * 9); color: #c2ad90; }
+/* notices and prompts wear a teal frame so they read as "the game talking", not the instruments */
+.h-prompt, .h-label { box-shadow: inset var(--px) var(--px) 0 #d7f5ee, inset calc(var(--px) * -1) calc(var(--px) * -1) 0 #3f8f8a, inset 0 0 0 calc(var(--px) * 2) #7fd1c7,
+    inset calc(var(--px) * 3) calc(var(--px) * 3) 0 #15121f, 0 0 0 var(--px) #15121f, calc(var(--px) * 2) calc(var(--px) * 3) 0 var(--px) #07060a99; }
+.h-prompt { left: 50%; transform: translateX(-50%); flex-direction: column; align-items: flex-start; gap: calc(var(--px) * 3); }
 .h-prompt.mid { top: 66%; }
-.h-label { position: absolute; transform: translateX(-50%); background: #1a1423e6; border: .4cqw solid #7fd1c7; padding: .5cqw 1.2cqw; font-size: 2.7cqw; white-space: nowrap; }
-.h-prompt.notice { top: 13cqw; }
-.h-hint { position: absolute; left: 2.5cqw; bottom: 2.5cqw; font-size: 2.5cqw; line-height: 1.25; color: #a89a8f; text-shadow: .3cqw .3cqw 0 #000; }
+.h-prompt.notice { top: calc(var(--px) * 34); }
+.h-label { position: absolute; transform: translateX(-50%); white-space: nowrap; padding: calc(var(--px) * 4) calc(var(--px) * 6); font-size: calc(var(--px) * 9); background: #1a1423; }
+.h-hint { position: absolute; left: calc(var(--px) * 9); bottom: calc(var(--px) * 8); font-size: calc(var(--px) * 8); line-height: 1.3; color: #c2ad90; }
 .h-hint b { color: #7fd1c7; font-weight: 400; }
-.pips { display: flex; gap: .6cqw; }
-.pips i { display: block; width: 1.3cqw; height: 2.6cqw; background: #7fd1c7; }
-.pips.low i { background: #e07a5f; }
-.pips i.off { background: #3a2f45; }
+/* a brass coin for credits */
+.coin { display: block; width: calc(var(--px) * 7); height: calc(var(--px) * 7); border-radius: 50%; background: radial-gradient(circle at 35% 35%, #fff3c4 0 22%, #eab668 23% 60%, #b5683f 61%); box-shadow: 0 0 0 var(--px) #15121f; }
+/* the fuel gauge: lit cells in a sunken slot */
+.pips { display: flex; gap: var(--px); padding: var(--px); background: #15121f; box-shadow: var(--px) var(--px) 0 #3a2f45; }
+.pips i { display: block; width: calc(var(--px) * 3); height: calc(var(--px) * 8); background: linear-gradient(to right, #d7f5ee 0 var(--px), #7fd1c7 var(--px) calc(var(--px) * 2), #3f8f8a calc(var(--px) * 2)); }
+.pips.low i { background: linear-gradient(to right, #f2a58a 0 var(--px), #e07a5f var(--px) calc(var(--px) * 2), #8f3b33 calc(var(--px) * 2)); }
+.pips i.off, .pips.low i.off { background: #2b1f3b; }
+.h-tag { font-size: calc(var(--px) * 8); color: #c2ad90; }
 
-/* ---------- ship console (amber phosphor) ---------- */
-#console { position: absolute; inset: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 1.6cqw 2.4cqw; background: #0b0803; color: #ffb000; font-family: 'VT323', ui-monospace, monospace; font-size: 3cqw; line-height: 1.08; text-transform: uppercase; text-shadow: 0 0 .7cqw #ffb00088; user-select: none; }
+/* ---------- the terminal (amber phosphor): a monitor that rises over the game and powers on ---------- */
+/* One art pixel, in stage units: the bezel is built from whole pixels so it sits with the pixel art. */
+#console { --px: calc(100cqw / 480); position: absolute; inset: 0; display: grid; place-items: center; user-select: none; }
 #console[hidden] { display: none; }
-#console::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, transparent 0 2px, #0006 2px 3px), radial-gradient(ellipse at center, transparent 60%, #000a 100%); }
+.c-shade { position: absolute; inset: 0; background: radial-gradient(ellipse at center, #07060a8c 35%, #07060ae0 100%); animation: c-fade .2s ease-out both; }
+.c-monitor { position: relative; width: 82cqw; box-sizing: border-box; padding: calc(var(--px) * 7) calc(var(--px) * 7) 0; background: #434761;
+  box-shadow: inset calc(var(--px) * 2) calc(var(--px) * 2) 0 #6f748b, inset calc(var(--px) * -2) calc(var(--px) * -2) 0 #2f3148,
+    0 0 0 calc(var(--px) * 2) #15121f, calc(var(--px) * 4) calc(var(--px) * 6) 0 calc(var(--px) * 2) #07060a99;
+  animation: c-rise .2s cubic-bezier(.2, .8, .3, 1) both; }
+/* the glass: dark until the tube lights */
+.c-screen { position: relative; aspect-ratio: 16 / 9; container-type: inline-size; overflow: hidden; background: #050402;
+  box-shadow: 0 0 0 calc(var(--px) * 2) #15121f, 0 0 0 calc(var(--px) * 4) #2f3148; }
+.c-screen::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, transparent 0 2px, #0006 2px 3px), radial-gradient(ellipse at center, transparent 60%, #000a 100%), linear-gradient(115deg, #ffffff0d 0 18%, transparent 18.5%); }
+.c-tube { position: absolute; inset: 0; background: #0b0803; transform-origin: center; animation: c-on .26s .12s cubic-bezier(.3, .7, .2, 1) both; }
+/* everything on the screen is sized in cqw of the screen itself, so the layout scales with the monitor */
+.c-page { position: absolute; inset: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 1.6cqw 2.4cqw; color: #ffb000; font-family: 'VT323', ui-monospace, monospace; font-size: 3cqw; line-height: 1.08; text-transform: uppercase; text-shadow: 0 0 .7cqw #ffb00088; }
+.c-chin { display: flex; align-items: center; gap: calc(var(--px) * 6); height: calc(var(--px) * 15); padding: 0 calc(var(--px) * 3); }
+.c-plate { font-family: 'Pixelify Sans', ui-monospace, monospace; font-size: calc(var(--px) * 8); line-height: 1; letter-spacing: .12em; text-transform: uppercase; color: #a7abbc; text-shadow: calc(var(--px) * 1) calc(var(--px) * 1) 0 #232336; }
+.c-grille { flex: 1; height: calc(var(--px) * 5); background: repeating-linear-gradient(to right, #2f3148 0 calc(var(--px) * 2), transparent calc(var(--px) * 2) calc(var(--px) * 4)); opacity: .9; }
+.c-led { width: calc(var(--px) * 4); height: calc(var(--px) * 4); background: #ffb000; box-shadow: 0 0 0 calc(var(--px) * 1) #15121f, 0 0 calc(var(--px) * 6) #ffb000; animation: c-led .26s .12s steps(1) both; }
+
+@keyframes c-fade { from { opacity: 0; } }
+@keyframes c-rise { from { transform: translateY(18cqw); opacity: 0; } }
+/* a tube warming up: a hot line that widens, then opens */
+@keyframes c-on { 0% { transform: scale(.5, .008); filter: brightness(5); } 40% { transform: scale(1, .008); filter: brightness(5); } 100% { transform: none; filter: none; } }
+@keyframes c-led { from { background: #5a3e00; box-shadow: 0 0 0 calc(var(--px) * 1) #15121f; } }
+@keyframes c-off { to { transform: scale(1, .008); filter: brightness(5); opacity: 0; } }
+@keyframes c-drop { to { transform: translateY(18cqw); opacity: 0; } }
+#console.closing .c-tube { animation: c-off .1s ease-in both; }
+#console.closing .c-monitor { animation: c-drop .16s .08s ease-in both; }
+#console.closing .c-shade { animation: c-fade .24s ease-in reverse both; }
+#console.closing .c-led { background: #5a3e00; box-shadow: 0 0 0 calc(var(--px) * 1) #15121f; animation: none; }
+@media (prefers-reduced-motion: reduce) { .c-shade, .c-monitor, .c-tube, .c-led, #console.closing * { animation-duration: .01s !important; animation-delay: 0s !important; } }
+
 #console button { all: unset; cursor: pointer; padding: 0 1cqw; }
 #console button:hover { background: #7a5500; }
 .c-head { display: flex; justify-content: space-between; gap: 2cqw; padding-bottom: .5cqw; border-bottom: 1px solid #7a5500; white-space: nowrap; }

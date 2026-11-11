@@ -32,36 +32,63 @@ const mm = (d: number) => `${(d / 1000).toFixed(1)} Mm`;
 const NAV_ROWS = 7;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${num(n)}`;
 
+/** How long the monitor takes to power down and drop away, in ms. Matches the `closing` animations in style.css. */
+const CLOSE_MS = 240;
+
 /**
- * An amber terminal screen. Which tabs it offers depends on where the player
- * opened it: the ship's computer, or one of a station's counters.
+ * An amber terminal: a monitor that rises over the game view and powers on, with the world still going on
+ * behind it. Which tabs it offers depends on where the player opened it: the ship's computer, or one of a
+ * station's counters.
  */
 export class Console {
   tab: Tab = 'nav';
   private tabs: Tab[] = ['nav'];
   private sel: Record<Tab, number> = { log: 0, port: 0, jobs: 0, hold: 0, yard: 0, nav: 0 };
   private msg = '';
+  private opened = false;
+  private closing = 0;
+  /** The lit picture, where each screen is written. */
+  private readonly page: HTMLElement;
+  private readonly plate: HTMLElement;
 
   constructor(private readonly el: HTMLElement, private readonly host: ConsoleHost) {
+    el.innerHTML = `
+      <div class="c-shade" data-act="close"></div>
+      <div class="c-monitor">
+        <div class="c-screen"><div class="c-tube"><div class="c-page"></div></div></div>
+        <div class="c-chin"><span class="c-plate"></span><span class="c-grille"></span><span class="c-led"></span></div>
+      </div>`;
+    this.page = el.querySelector<HTMLElement>('.c-page')!;
+    this.plate = el.querySelector<HTMLElement>('.c-plate')!;
     el.addEventListener('click', e => this.onClick(e));
   }
 
+  /** True from the moment it is opened until the moment it is told to close; the power-down plays after that. */
   get isOpen(): boolean {
-    return !this.el.hidden;
+    return this.opened;
   }
 
-  /** Show the given tabs, starting on the first. */
-  open(tabs: Tab[], msg = ''): void {
+  /** Show the given tabs, starting on the first. `title` goes on the maker's plate under the screen. */
+  open(tabs: Tab[], title: string, msg = ''): void {
+    clearTimeout(this.closing);
     this.tabs = tabs;
     this.tab = tabs[0];
     this.msg = msg;
+    this.opened = true;
+    this.plate.textContent = title;
+    this.el.classList.remove('closing');
     this.el.hidden = false;
     this.render();
   }
 
   close(): void {
-    if (!this.isOpen) return;
-    this.el.hidden = true;
+    if (!this.opened) return;
+    this.opened = false;
+    this.el.classList.add('closing');
+    this.closing = window.setTimeout(() => {
+      this.el.hidden = true;
+      this.el.classList.remove('closing');
+    }, CLOSE_MS);
     this.host.closed();
   }
 
@@ -175,7 +202,7 @@ export class Console {
       log: this.logTab, port: this.portTab, jobs: this.jobsTab, hold: this.holdTab, yard: this.yardTab, nav: this.navTab,
     }[this.tab].call(this, s);
 
-    this.el.innerHTML = `
+    this.page.innerHTML = `
       <div class="c-head">
         <span>${esc(s.docked ? port(s, s.docked).name : 'Under way')}</span>
         <span>Day ${s.day}</span>
