@@ -1,0 +1,64 @@
+html, body { height: 100%; margin: 0; background: #07060a; overflow: hidden; }
+body { display: grid; place-items: center; }
+
+/* The stage is the 320x180 game frame scaled up; everything inside sizes itself in cqw. */
+#stage { position: relative; container-type: inline-size; background: #1a1423; overflow: hidden; }
+#view { position: absolute; inset: 0; width: 100%; height: 100%; display: block; image-rendering: pixelated; }
+
+/* ---------- flight HUD (dusty pixel) ---------- */
+#hud { position: absolute; inset: 0; pointer-events: none; font-family: 'Pixelify Sans', ui-monospace, monospace; color: #f2e9dc; font-size: 3.3cqw; line-height: 1; text-transform: uppercase; }
+#hud[hidden] { display: none; }
+.h-box { position: absolute; background: #1a1423; border: .6cqw solid #eab668; padding: 1cqw 1.6cqw; box-shadow: .6cqw .6cqw 0 #0009; display: flex; align-items: center; gap: 1.6cqw; white-space: nowrap; }
+.h-tl { left: 2.5cqw; top: 2.5cqw; }
+.h-tr { right: 2.5cqw; top: 2.5cqw; }
+.h-br { right: 2.5cqw; bottom: 2.5cqw; }
+.h-prompt { left: 50%; top: 66%; transform: translateX(-50%); border-color: #7fd1c7; }
+.h-hint { position: absolute; left: 2.5cqw; bottom: 2.5cqw; font-size: 2.5cqw; line-height: 1.25; color: #a89a8f; text-shadow: .3cqw .3cqw 0 #000; }
+.h-hint b { color: #7fd1c7; font-weight: 400; }
+.pips { display: flex; gap: .6cqw; }
+.pips i { display: block; width: 1.3cqw; height: 2.6cqw; background: #7fd1c7; }
+.pips.low i { background: #e07a5f; }
+.pips i.off { background: #3a2f45; }
+
+/* ---------- ship console (amber phosphor) ---------- */
+#console { position: absolute; inset: 0; box-sizing: border-box; display: flex; flex-direction: column; padding: 1.6cqw 2.4cqw; background: #0b0803; color: #ffb000; font-family: 'VT323', ui-monospace, monospace; font-size: 3cqw; line-height: 1.08; text-transform: uppercase; text-shadow: 0 0 .7cqw #ffb00088; user-select: none; }
+#console[hidden] { display: none; }
+#console::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: repeating-linear-gradient(to bottom, transparent 0 2px, #0006 2px 3px), radial-gradient(ellipse at center, transparent 60%, #000a 100%); }
+#console button { all: unset; cursor: pointer; padding: 0 1cqw; }
+#console button:hover { background: #7a5500; }
+.c-head { display: flex; justify-content: space-between; gap: 2cqw; padding-bottom: .5cqw; border-bottom: 1px solid #7a5500; white-space: nowrap; }
+.c-tabs { display: flex; gap: 1.5cqw; padding: .7cqw 0; }
+#console .c-tabs button.on { background: #ffb000; color: #0b0803; text-shadow: none; }
+#console .c-tabs button.off { color: #6b4a00; text-shadow: none; }
+.c-body { flex: 1; min-height: 0; overflow: auto; scrollbar-width: none; }
+.c-foot { display: flex; justify-content: space-between; gap: 2cqw; padding-top: .5cqw; border-top: 1px solid #7a5500; white-space: nowrap; }
+.c-msg { overflow: hidden; text-overflow: ellipsis; }
+.c-actions { display: flex; gap: 1cqw; }
+.cursor { animation: blink 1s steps(1) infinite; }
+@keyframes blink { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+.dim { color: #b37b00; }
+.neg { color: #ff7a3d; }
+.sect { margin-top: 1.1cqw; color: #b37b00; border-bottom: 1px dashed #5a3f00; }
+.line { display: flex; justify-content: space-between; gap: 2cqw; }
+
+.row { display: grid; gap: 1.5cqw; padding: 0 1cqw; cursor: pointer; white-space: nowrap; }
+.row > span { overflow: hidden; text-overflow: ellipsis; }
+.row.dim { cursor: default; }
+.row.nofit { color: #b37b00; }
+.row.sel { background: #ffb000; color: #0b0803; text-shadow: none; }
+.r-port { grid-template-columns: 1fr 16cqw 12cqw; }
+.r-jobs { grid-template-columns: 1fr 23cqw 7cqw 10cqw 11cqw 8cqw; }
+.r-hold { grid-template-columns: 1fr 26cqw 8cqw 11cqw 12cqw; }
+.r-yard { grid-template-columns: 1fr 12cqw 18cqw 13cqw; }
+.r-nav { grid-template-columns: 1fr 9cqw 6cqw 9cqw; }
+.r-port > span:not(:first-child), .r-jobs > span:nth-child(n+3), .r-hold > span:nth-child(n+3), .r-yard > span:last-child, .r-nav > span:not(:first-child) { text-align: right; }
+
+.nav { display: grid; grid-template-columns: 42% 1fr; gap: 2cqw; height: 100%; }
+.map { width: 100%; height: 100%; }
+.map * { vector-effect: non-scaling-stroke; fill: none; stroke: #ffb000; stroke-width: 1.2px; }
+.map .grid { stroke: #2b1d02; }
+.map .dash { stroke: #b37b00; stroke-dasharray: 3 3; }
+.map .fill { fill: #ffb000; }
+.map text { fill: #ffb000; stroke: none; font-size: 230px; text-anchor: middle; }
