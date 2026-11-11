@@ -262,14 +262,22 @@ export class FlightView {
 
   /** A tapering flame: white-hot at the nozzle, cooling through amber to rust, breaking up at the tip. */
   private drawPlume(from: { x: number; y: number }, cos: number, sin: number, length: number, halfWidth: number): void {
+    if (length <= 0) return;
     const g = this.g, colours = EXHAUST.plume;
-    for (let i = 0; i < length; i++) {
-      const t = i / length, hw = halfWidth * (1 - t * 0.75);
-      for (let j = -Math.round(hw); j <= Math.round(hw); j++) {
-        if (t > 0.65 && ((i + j + (this.frame >> 1)) & 1)) continue;
-        const heat = t + Math.abs(j) / (halfWidth + 1) * 0.5;
+    // Walk the screen's own pixels and ask each where it falls in the flame. Stepping along the flame and
+    // rounding instead leaves holes at every heading that is not square to the grid.
+    const reach = Math.ceil(length + halfWidth) + 1, x0 = Math.floor(from.x) - reach, y0 = Math.floor(from.y) - reach;
+    for (let py = y0; py <= y0 + reach * 2; py++) {
+      for (let px = x0; px <= x0 + reach * 2; px++) {
+        const dx = px + 0.5 - from.x, dy = py + 0.5 - from.y;
+        const along = -(dx * cos + dy * sin), across = Math.abs(dy * cos - dx * sin);
+        if (along < 0 || along >= length) continue;
+        const t = along / length;
+        if (across > halfWidth * (1 - t * 0.75) + 0.5) continue;
+        if (t > 0.65 && ((px + py + (this.frame >> 1)) & 1)) continue;
+        const heat = t + across / (halfWidth + 1) * 0.5;
         g.fillStyle = colours[Math.min(colours.length - 1, Math.floor(heat * colours.length))];
-        g.fillRect(Math.floor(from.x - cos * i - sin * j), Math.floor(from.y - sin * i + cos * j), 1, 1);
+        g.fillRect(px, py, 1, 1);
       }
     }
   }
