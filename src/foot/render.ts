@@ -1,6 +1,7 @@
 import { cargoMax, holdTons } from '../sim/game';
 import type { GameState, Port } from '../sim/types';
 import { port } from '../sim/world';
+import { INK, PAL, SIGNAL } from '../art/palette';
 import { TILE_PX, VIEW_H, VIEW_W, ZOOM } from '../view';
 import { OUTFITS, PERSON, makePerson } from './art/people';
 import { shipArt } from './art/ship';
@@ -45,6 +46,8 @@ export class FootView {
     yardBoss: makePerson(OUTFITS.yardBoss),
   };
   private readonly stars: Star[] = [];
+  /** The station's hull along the bottom of the frame and the boarding tube up to the airlock. Painted once. */
+  private readonly dock = paintDock();
   private driftX = 0;
   private driftY = 0;
 
@@ -149,25 +152,98 @@ export class FootView {
       g.fillRect(Math.floor(x), Math.floor(y), 1, 1);
     }
     if (state.docked) {
-      const off = OFFSET.ship, door = AREAS.ship.door, x = off.x + door.x * TILE_PX, top = off.y + (door.y + 2) * TILE_PX;
-      const band = 39;
-      g.fillStyle = '#15121f';
-      g.fillRect(0, VIEW_H - band, VIEW_W, band);
-      g.fillStyle = '#3a3448';
-      g.fillRect(0, VIEW_H - band + 1, VIEW_W, band - 1);
-      g.fillStyle = '#555a72';
-      g.fillRect(0, VIEW_H - band + 1, VIEW_W, 3);
-      for (let lx = 9; lx < VIEW_W; lx += 36) {
-        g.fillStyle = Math.floor(f.time * 2 + lx) % 5 ? '#eab668' : '#fff3c4';
-        g.fillRect(lx, VIEW_H - 27, 3, 3);
+      g.drawImage(this.dock, 0, VIEW_H - this.dock.height);
+      // guide lamps chase along the station's lip toward the tube
+      const step = Math.floor(f.time * 4);
+      for (let i = 0, lx = DOCK.lampFirst; lx < VIEW_W; lx += DOCK.lampGap, i++) {
+        const away = Math.abs(lx - (DOCK.tubeX + TILE_PX / 2)) / DOCK.lampGap;
+        g.fillStyle = (Math.round(away) + step) % 4 === 0 ? SIGNAL.white : PAL.amber[3];
+        g.fillRect(lx + 1, VIEW_H - DOCK.band + 4, 3, 2);
       }
-      // docking tube from the airlock down to the station
-      g.fillStyle = '#15121f';
-      g.fillRect(x, top, TILE_PX, VIEW_H - top);
-      g.fillStyle = '#8a8fa3';
-      g.fillRect(x + 2, top, TILE_PX - 4, VIEW_H - top);
-      g.fillStyle = '#555a72';
-      for (let y = top + 3; y < VIEW_H; y += 6) g.fillRect(x + 2, y, TILE_PX - 4, 2);
     }
   }
+}
+
+/** Where the dock sits: a band of station hull along the bottom, and the tube from the airlock down into it. */
+const DOCK = {
+  band: 39,
+  tubeX: OFFSET.ship.x + AREAS.ship.door.x * TILE_PX,
+  tubeTop: OFFSET.ship.y + (AREAS.ship.door.y + 2) * TILE_PX,
+  lampFirst: 10, lampGap: 36,
+};
+
+function paintDock(): HTMLCanvasElement {
+  const c = document.createElement('canvas');
+  // tall enough to hold the stretch of tube above the band
+  const rise = VIEW_H - DOCK.band - DOCK.tubeTop, top = Math.max(0, rise);
+  c.width = VIEW_W;
+  c.height = DOCK.band + top;
+  const g = c.getContext('2d')!, st = PAL.steel;
+  const px = (x: number, y: number, w: number, h: number, colour: string) => { g.fillStyle = colour; g.fillRect(x, y + top, w, h); };
+
+  // the hull: a lit lip, a plated wall, a darker skirt
+  px(0, 0, VIEW_W, DOCK.band, st[2]);
+  px(0, 0, VIEW_W, 1, INK);
+  px(0, 1, VIEW_W, 1, st[6]);
+  px(0, 2, VIEW_W, 1, st[5]);
+  px(0, 3, VIEW_W, 4, st[4]);
+  px(0, 7, VIEW_W, 1, st[1]);
+  px(0, 8, VIEW_W, 15, st[3]);
+  px(0, 8, VIEW_W, 1, st[4]);
+  px(0, 23, VIEW_W, 1, st[1]);
+  px(0, 24, VIEW_W, 1, st[3]);
+  // the skirt falls into shadow: a checker of the two darkest steels
+  for (let y = 31; y < DOCK.band; y++) for (let x = (y & 1); x < VIEW_W; x += 2) px(x, y, 1, 1, st[y > 34 ? 0 : 1]);
+  for (let x = 0; x < VIEW_W; x++) if (x % 3 === 0) px(x, DOCK.band - 1, 1, 1, st[0]);
+
+  // plate seams, with a rivet either side, and the odd plate that was replaced
+  for (let x = 22, i = 0; x < VIEW_W; x += 48, i++) {
+    px(x, 9, 1, 14, st[1]);
+    px(x + 1, 9, 1, 14, st[4]);
+    for (const y of [11, 20]) { px(x - 3, y, 1, 1, st[5]); px(x - 3, y + 1, 1, 1, st[1]); px(x + 4, y, 1, 1, st[5]); px(x + 4, y + 1, 1, 1, st[1]); }
+    if (i % 4 === 1) { px(x + 2, 9, 46, 14, st[2]); px(x + 2, 9, 46, 1, st[3]); px(x + 30, 13, 12, 5, PAL.rust[3]); px(x + 30, 13, 12, 1, PAL.rust[5]); }
+  }
+  // portholes: most lamplit, a few dark
+  for (let x = 44, i = 0; x < VIEW_W; x += 48, i++) {
+    px(x - 1, 12, 9, 8, st[1]);
+    px(x, 13, 7, 6, INK);
+    const lit = i % 5 !== 3;
+    px(x + 1, 14, 5, 4, lit ? PAL.amber[3] : PAL.teal[0]);
+    px(x + 1, 14, 5, 1, lit ? PAL.amber[5] : PAL.teal[1]);
+    px(x + 3, 14, 1, 4, INK);
+    if (lit) px(x + 1, 20, 5, 1, PAL.amber[1]);
+  }
+  // lamp housings on the lip
+  for (let x = DOCK.lampFirst; x < VIEW_W; x += DOCK.lampGap) { px(x, 3, 5, 4, INK); px(x + 1, 4, 3, 2, PAL.amber[3]); }
+  // a service pipe along the skirt, strapped down every so often
+  px(0, 26, VIEW_W, 1, st[5]);
+  px(0, 27, VIEW_W, 2, st[4]);
+  px(0, 29, VIEW_W, 1, st[1]);
+  for (let x = 8; x < VIEW_W; x += 60) { px(x, 25, 3, 6, st[1]); px(x, 25, 3, 1, st[6]); px(x + 1, 26, 1, 4, PAL.amber[2]); }
+
+  // the boarding tube: a ribbed sleeve, lit from the left, running down into the hull
+  const x0 = DOCK.tubeX, w = TILE_PX, y0 = -top, y1 = DOCK.band;
+  const rib = [st[6], st[5], st[3], st[2]];
+  for (let y = y0; y < y1; y++) {
+    const base = rib[((y - y0) % 4 + 4) % 4], n = st.indexOf(base);
+    px(x0, y, w, 1, base);
+    px(x0 + 1, y, 2, 1, st[Math.max(0, n - 1)]);
+    px(x0 + 5, y, 4, 1, st[Math.min(st.length - 1, n + 1)]);
+    px(x0 + w - 6, y, 3, 1, st[Math.max(0, n - 1)]);
+    px(x0 + w - 3, y, 2, 1, st[Math.max(0, n - 2)]);
+    px(x0, y, 1, 1, INK);
+    px(x0 + w - 1, y, 1, 1, INK);
+  }
+  // a clamp ring under the ship's hull, and a hazard-painted collar where the tube enters the station
+  px(x0 - 2, y0, w + 4, 4, INK);
+  px(x0 - 1, y0, w + 2, 1, st[7]);
+  px(x0 - 1, y0 + 1, w + 2, 2, st[5]);
+  px(x0 - 4, -1, w + 8, 9, INK);
+  px(x0 - 3, 0, w + 6, 7, PAL.amber[4]);
+  px(x0 - 3, 0, w + 6, 1, PAL.amber[6]);
+  px(x0 - 3, 6, w + 6, 1, PAL.amber[2]);
+  for (let x = -3; x < w + 3; x++) for (let y = 1; y < 6; y++) if (((x + y) >> 1) % 3 === 0) px(x0 + x, y, 1, 1, INK);
+  // its shadow on the plating to the right
+  for (let y = 8; y < 23; y++) for (let x = (y & 1); x < 5; x += 2) px(x0 + w + x, y, 1, 1, st[1]);
+  return c;
 }
