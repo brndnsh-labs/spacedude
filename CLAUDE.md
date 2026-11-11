@@ -5,7 +5,7 @@ A cozy space-trucking game in the browser: take jobs, haul cargo between ports, 
 ## Design pillars
 
 - **Cozy.** Nobody dies and nothing is game over. Running dry means a tow; being broke means fuel on a tab. Any rule change has to keep "there is always a way to take a job and deliver it".
-- **Two looks.** The world is dusty pixel art on a 320x180 canvas scaled by whole numbers. Ship and station computers are an amber phosphor terminal drawn in the DOM.
+- **Two looks.** The world is 16-bit-era pixel art (SNES and Genesis, not NES) on a 480x270 canvas scaled by whole numbers; `docs/art-style.md` is the standard. Ship and station computers are an amber phosphor terminal drawn in the DOM.
 - **Immersion on foot.** The player walks the ship and stations and uses things there (seat, terminal, airlock, counters). Don't add a menu for something that could be a place to walk to.
 
 ## Commands
@@ -21,8 +21,12 @@ A cozy space-trucking game in the browser: take jobs, haul cargo between ports, 
 - `src/sim/` - the rules. No DOM, no rendering, no globals: everything hangs off `GameState`, including the RNG (`state.seed`) and the generated sector (`state.ports`, `state.lanes`). That is what lets bots play it headless.
   - `sector.ts` generates the map; `world.ts` holds the four fixed core ports and lookups; `nav.ts` plans routes; `jobs.ts` and `game.ts` are the economy and flight.
   - `bots.ts`, `harness.ts`, `balance.ts` are the balance harness. They ship with the repo but not the game.
-- `src/flight/` - the flight view. All art is drawn by code into canvases; generated ports reuse a type's drawing with the hue turned.
-- `src/foot/` - walking: tile maps in `world.ts`, art in `art.ts`.
+- `src/view.ts` - the frame: 480x270, and `ZOOM` (1.5 screen pixels per sim unit; the sim's units never changed).
+- `src/flight/` - the flight view. All art is drawn by code into canvases; generated ports reuse a type's drawing with the hue turned. One station design per file in `stations/`.
+- `src/foot/` - walking: tile maps in `world.ts` (16 map units a tile), art in `art/` (one module each for the ship, stations and people; the contract is `art/types.ts`).
+- `src/art/palette.ts` - the master colour ramps.
+- `src/crt/` - the optional CRT filter (`V` toggles it). `src/settings.ts` holds player preferences.
+- `lab.html` + `src/lab.ts` - the art lab: every sprite and room enlarged, dev server only.
 - `src/ui/` - the terminal (`console.ts`) and HUD (`hud.ts`), sized in `cqw` so they scale with the stage.
 - `src/main.ts` - input, modes (on foot / at the helm) and the frame loop.
 - `e2e/smoke.js` + `scripts/e2e.mjs` - the browser check.

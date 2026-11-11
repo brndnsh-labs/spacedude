@@ -2,6 +2,7 @@ import { fuelMax } from '../sim/game';
 import { nextStop } from '../sim/nav';
 import type { GameState } from '../sim/types';
 import { port } from '../sim/world';
+import { VIEW_W } from '../view';
 
 const PIPS = 8;
 
@@ -13,7 +14,7 @@ export interface HudInfo {
   place: string;
   /** One line is an action prompt; several are a notice (such as an arrival report). */
   prompt: string[];
-  /** On foot: where the walker is in the 320x180 frame, so the prompt can sit under them. */
+  /** On foot: where the walker is in the frame, in screen pixels, so the prompt can sit under them. */
   anchor?: { x: number; y: number };
 }
 
@@ -44,8 +45,9 @@ export class Hud {
       : 'Arrows / WASD walk<br>E use';
     let prompt = '';
     if (info.prompt.length === 1 && info.anchor) {
-      // A small label under the walker keeps your eyes on the character. 3.2 view pixels = 1cqw.
-      const x = Math.max(52, Math.min(268, info.anchor.x)) / 3.2, y = (info.anchor.y + 7) / 3.2;
+      // A small label under the walker keeps your eyes on the character. The stage is 100cqw wide.
+      const cqw = VIEW_W / 100;
+      const x = Math.max(78, Math.min(VIEW_W - 78, info.anchor.x)) / cqw, y = (info.anchor.y + 10) / cqw;
       prompt = `<div class="h-label" style="left:${x.toFixed(1)}cqw;top:${y.toFixed(1)}cqw">${esc(info.prompt[0])}</div>`;
     } else if (info.prompt.length) {
       prompt = `<div class="h-box h-prompt ${info.prompt.length > 1 ? 'notice' : 'mid'}">${info.prompt.map(l => `<div>${esc(l)}</div>`).join('')}</div>`;

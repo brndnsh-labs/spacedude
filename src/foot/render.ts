@@ -1,56 +1,22 @@
 import { cargoMax, holdTons } from '../sim/game';
 import type { GameState, Port } from '../sim/types';
 import { port } from '../sim/world';
-import {
-  OBJECTS, OUTFITS, PERSON_H, PERSON_W, SHIP_THEME, drawCrate, drawCrateSlot, drawFloor, drawWall,
-  makePerson, stationTheme, type FloorKind, type Theme,
-} from './art';
-import { AREAS, COLS, CRATE_SLOTS, ROWS, TILE, cratesFor, isFloor, tileAt, type AreaId, type Walker } from './world';
+import { TILE_PX, VIEW_H, VIEW_W, ZOOM } from '../view';
+import { OUTFITS, PERSON, makePerson } from './art/people';
+import { shipArt } from './art/ship';
+import { stationArt } from './art/station';
+import type { AreaArt, LiveFrame } from './art/types';
+import { AREAS, TILE, cratesFor, type AreaId, type Walker } from './world';
 
-const VIEW_W = 320, VIEW_H = 180;
-/** Where each map sits in the 320x180 frame. */
-const OFFSET: Record<AreaId, { x: number; y: number }> = { ship: { x: 0, y: 18 }, station: { x: 0, y: 20 } };
+/** Where each map's top-left corner sits in the frame, in screen pixels. */
+const OFFSET: Record<AreaId, { x: number; y: number }> = { ship: { x: 0, y: 27 }, station: { x: 0, y: 30 } };
 
-/** Where the walker's feet are in the 320x180 frame. */
+/** Where the walker's feet are in the frame, in screen pixels. Map positions are in map units: ZOOM pixels each. */
 export function walkerOnScreen(w: Walker): { x: number; y: number } {
-  return { x: OFFSET[w.area].x + w.x, y: OFFSET[w.area].y + w.y };
+  return { x: OFFSET[w.area].x + w.x * ZOOM, y: OFFSET[w.area].y + w.y * ZOOM };
 }
 
-const SHIP_FLOORS: Record<string, FloorKind> = { '.': 'wood', ',': 'metal', ':': 'bridge', ';': 'grate' };
-
-/** The floor an object or crate slot sits on: whatever floor is next to it. */
-function floorUnder(area: AreaId, tx: number, ty: number): FloorKind {
-  if (area === 'station') return tileAt(area, tx, ty) === 'n' ? 'back' : 'tile';
-  for (const [dx, dy] of [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    const kind = SHIP_FLOORS[tileAt(area, tx + dx, ty + dy)];
-    if (kind) return kind;
-  }
-  return 'metal';
-}
-
-/** Everything that never changes in an area, drawn once. `yard` is whether a station's shipyard counter is open. */
-function bakeArea(area: AreaId, th: Theme, yard = true): HTMLCanvasElement {
-  const cv = document.createElement('canvas');
-  cv.width = COLS * TILE;
-  cv.height = ROWS * TILE;
-  const g = cv.getContext('2d')!;
-  for (let ty = 0; ty < ROWS; ty++) {
-    for (let tx = 0; tx < COLS; tx++) {
-      const ch = tileAt(area, tx, ty), ox = tx * TILE, oy = ty * TILE;
-      if (ch === ' ') continue;
-      if (ch === '#' || ch === 'w') {
-        const below = tileAt(area, tx, ty + 1);
-        drawWall(g, ox, oy, below !== '#' && below !== 'w' && below !== ' ' && below !== 'A', th, ch === 'w');
-        continue;
-      }
-      drawFloor(g, floorUnder(area, tx, ty), ox, oy, tx, ty, th);
-      if (ch === 'c') drawCrateSlot(g, ox, oy);
-      else if (!isFloor(ch) && ch !== 'n') OBJECTS[ch === 'y' && !yard ? 'Y' : ch]?.(g, ox, oy);
-    }
-  }
-  return cv;
-}
-
+/** Who stands behind which counter: the tile they stand on. */
 const NPCS: readonly { tx: number; ty: number; outfit: keyof typeof OUTFITS }[] = [
   { tx: 2, ty: 1, outfit: 'broker' },
   { tx: 12, ty: 1, outfit: 'clerk' },
@@ -70,8 +36,8 @@ export interface FootFrame {
 /** Draws the on-foot view: the ship's deck with space going by, or a station concourse. */
 export class FootView {
   private readonly g: CanvasRenderingContext2D;
-  private readonly shipDeck = bakeArea('ship', SHIP_THEME);
-  private readonly stations = new Map<string, HTMLCanvasElement>();
+  private readonly shipDeck = shipArt();
+  private readonly stations = new Map<string, AreaArt>();
   private readonly people = {
     player: makePerson(OUTFITS.player),
     broker: makePerson(OUTFITS.broker),
@@ -86,7 +52,7 @@ export class FootView {
     this.g = canvas.getContext('2d')!;
     let seed = 91;
     const r = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-    for (let i = 0; i < 110; i++) {
+    for (let i = 0; i < 220; i++) {
       const depth = r();
       this.stars.push({
         x: r() * VIEW_W, y: r() * VIEW_H, depth: 0.15 + depth * 0.6,
@@ -95,14 +61,17 @@ export class FootView {
     }
   }
 
-  private station(p: Port): HTMLCanvasElement {
+  private station(p: Port): AreaArt {
     const key = `${p.type}:${p.look}:${p.yard}`;
-    let cv = this.stations.get(key);
-    if (!cv) {
-      cv = bakeArea('station', stationTheme(p.type, p.look), p.yard);
-      this.stations.set(key, cv);
-    }
-    return cv;
+    let art = this.stations.get(key);
+    if (!art) this.stations.set(key, (art = stationArt(p)));
+    return art;
+  }
+
+  /** Draw a person with their feet at a screen position. */
+  private person(frame: HTMLCanvasElement, fx: number, fy: number): void {
+    const k = PERSON.scale;
+    this.g.drawImage(frame, Math.round(fx - PERSON.footX * k), Math.round(fy - PERSON.footY * k), PERSON.w * k, PERSON.h * k);
   }
 
   draw(w: Walker, state: GameState, f: FootFrame): void {
@@ -117,50 +86,51 @@ export class FootView {
     }
 
     const here = state.docked ? port(state, state.docked) : state.ports[0];
-    g.drawImage(w.area === 'ship' ? this.shipDeck : this.station(here), off.x, off.y);
+    const art = w.area === 'ship' ? this.shipDeck : this.station(here);
+    // Art drawn at another tile size is stretched to the frame's; its own pixels are k screen pixels.
+    const k = TILE_PX / art.tile;
+    const live: LiveFrame = {
+      time: f.time, thrusting: f.thrusting, docked: !!state.docked, crates: cratesFor(holdTons(state), cargoMax(state)),
+    };
+    g.drawImage(art.back, off.x, off.y, art.back.width * k, art.back.height * k);
+    if (art.live) {
+      g.setTransform(k, 0, 0, k, off.x, off.y);
+      art.live(g, live);
+      g.setTransform(1, 0, 0, 1, 0, 0);
+    }
 
-    if (w.area === 'ship') {
-      const filled = cratesFor(holdTons(state), cargoMax(state));
-      CRATE_SLOTS.slice(0, filled).forEach((s, i) => drawCrate(g, off.x + s.x * TILE, off.y + s.y * TILE, i));
-      // engine cores brighten under thrust; the airlock lamp shows whether there is a station outside
-      AREAS.ship.rows.forEach((row, ty) => [...row].forEach((ch, tx) => {
-        const ox = off.x + tx * TILE, oy = off.y + ty * TILE;
-        if (ch === 'e' && f.thrusting) {
-          g.fillStyle = Math.floor(f.time * 12 + tx + ty) % 2 ? '#fff3c4' : '#ffd27a';
-          g.fillRect(ox + 6, oy + 6, 4, 4);
-        } else if (ch === 'A') {
-          g.fillStyle = state.docked ? '#8fc47a' : '#e07a5f';
-          g.fillRect(ox + 7, oy + 13, 2, 2);
-        } else if (ch === 'T' && Math.floor(f.time * 1.5) % 2) {
-          g.fillStyle = '#ffb000';
-          g.fillRect(ox + 9, oy + 7, 2, 1);
-        }
-      }));
-    } else {
+    if (w.area === 'station') {
       for (const n of NPCS) {
         if (n.outfit === 'yardBoss' && !here.yard) continue; // nobody behind a shuttered counter
-        const bob = Math.floor(f.time * 0.8 + n.tx) % 4 === 0 ? 1 : 0;
-        g.drawImage(this.people[n.outfit].down[0], off.x + n.tx * TILE + 2, off.y + n.ty * TILE - 2 + bob);
+        const sprites = this.people[n.outfit];
+        const idle = sprites.idle;
+        const frame = idle ? idle[Math.floor(f.time * 3 + n.tx) % idle.length] : sprites.down[0];
+        const bob = !idle && Math.floor(f.time * 0.8 + n.tx) % 4 === 0 ? 1 : 0;
+        this.person(frame, off.x + (n.tx + 0.5) * TILE_PX, off.y + (n.ty * TILE + 11) * ZOOM + bob);
       }
     }
 
     if (f.mark) {
-      const x = off.x + f.mark.tx * TILE, y = off.y + f.mark.ty * TILE, pulse = Math.floor(f.time * 3) % 2;
+      const x = off.x + f.mark.tx * TILE_PX, y = off.y + f.mark.ty * TILE_PX, pulse = Math.floor(f.time * 3) % 2;
       g.fillStyle = '#7fd1c7';
       for (const [ax, ay] of [[0, 0], [1, 0], [1, 1], [0, 1]]) {
-        const cx = x - 1 - pulse + ax * (TILE + 1 + pulse * 2), cy = y - 1 - pulse + ay * (TILE + 1 + pulse * 2);
-        g.fillRect(ax ? cx - 2 : cx, cy, 3, 1);
-        g.fillRect(cx, ay ? cy - 2 : cy, 1, 3);
+        const cx = x - 1 - pulse + ax * (TILE_PX + 1 + pulse * 2), cy = y - 1 - pulse + ay * (TILE_PX + 1 + pulse * 2);
+        g.fillRect(ax ? cx - 4 : cx, cy, 5, 1);
+        g.fillRect(cx, ay ? cy - 4 : cy, 1, 5);
       }
     }
 
     // the walker, with a soft shadow at the feet
     const frames = this.people.player[w.facing];
-    const frame = w.moving ? frames[Math.floor(w.phase) % frames.length] : frames[0];
-    const sx = Math.round(off.x + w.x), sy = Math.round(off.y + w.y);
+    const walk = frames.length - 1;
+    const frame = w.moving && walk > 0 ? frames[1 + (Math.floor(w.phase) % walk)] : frames[0];
+    const feet = walkerOnScreen(w), sx = Math.round(feet.x), sy = Math.round(feet.y);
     g.fillStyle = 'rgba(21,18,31,0.35)';
-    g.fillRect(sx - 4, sy + 1, 8, 2);
-    g.drawImage(frame, sx - PERSON_W / 2, sy - PERSON_H + 3);
+    g.fillRect(sx - 6, sy + 1, 12, 3);
+    g.fillRect(sx - 4, sy + 4, 8, 1);
+    this.person(frame, sx, sy);
+
+    if (art.front) g.drawImage(art.front, off.x, off.y, art.front.width * k, art.front.height * k);
   }
 
   /** Space outside the hull: stars slide past with the ship's motion, and the dock shows when berthed. */
@@ -168,8 +138,8 @@ export class FootView {
     const g = this.g, s = state.ship;
     // The deck is always drawn nose-right, so turn the velocity into the ship's own frame.
     const cos = Math.cos(s.angle), sin = Math.sin(s.angle);
-    this.driftX += (s.vx * cos + s.vy * sin) * f.dt;
-    this.driftY += (-s.vx * sin + s.vy * cos) * f.dt;
+    this.driftX += (s.vx * cos + s.vy * sin) * f.dt * ZOOM;
+    this.driftY += (-s.vx * sin + s.vy * cos) * f.dt * ZOOM;
     g.fillStyle = '#1a1423';
     g.fillRect(0, 0, VIEW_W, VIEW_H);
     for (const st of this.stars) {
@@ -179,24 +149,25 @@ export class FootView {
       g.fillRect(Math.floor(x), Math.floor(y), 1, 1);
     }
     if (state.docked) {
-      const off = OFFSET.ship, door = AREAS.ship.door, x = off.x + door.x * TILE, top = off.y + (door.y + 2) * TILE;
+      const off = OFFSET.ship, door = AREAS.ship.door, x = off.x + door.x * TILE_PX, top = off.y + (door.y + 2) * TILE_PX;
+      const band = 39;
       g.fillStyle = '#15121f';
-      g.fillRect(0, VIEW_H - 26, VIEW_W, 26);
+      g.fillRect(0, VIEW_H - band, VIEW_W, band);
       g.fillStyle = '#3a3448';
-      g.fillRect(0, VIEW_H - 25, VIEW_W, 25);
+      g.fillRect(0, VIEW_H - band + 1, VIEW_W, band - 1);
       g.fillStyle = '#555a72';
-      g.fillRect(0, VIEW_H - 25, VIEW_W, 2);
-      for (let lx = 6; lx < VIEW_W; lx += 24) {
+      g.fillRect(0, VIEW_H - band + 1, VIEW_W, 3);
+      for (let lx = 9; lx < VIEW_W; lx += 36) {
         g.fillStyle = Math.floor(f.time * 2 + lx) % 5 ? '#eab668' : '#fff3c4';
-        g.fillRect(lx, VIEW_H - 18, 2, 2);
+        g.fillRect(lx, VIEW_H - 27, 3, 3);
       }
       // docking tube from the airlock down to the station
       g.fillStyle = '#15121f';
-      g.fillRect(x, top, TILE, VIEW_H - top);
+      g.fillRect(x, top, TILE_PX, VIEW_H - top);
       g.fillStyle = '#8a8fa3';
-      g.fillRect(x + 1, top, TILE - 2, VIEW_H - top);
+      g.fillRect(x + 2, top, TILE_PX - 4, VIEW_H - top);
       g.fillStyle = '#555a72';
-      for (let y = top + 2; y < VIEW_H; y += 4) g.fillRect(x + 1, y, TILE - 2, 1);
+      for (let y = top + 3; y < VIEW_H; y += 6) g.fillRect(x + 2, y, TILE_PX - 4, 2);
     }
   }
 }

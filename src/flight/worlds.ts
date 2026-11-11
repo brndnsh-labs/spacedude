@@ -4,6 +4,11 @@ import { LIGHT, PixelBuf, bay, clamp01, fbm3, noise3, rng, shade } from './pixel
 
 export interface WorldSprite {
   canvas: HTMLCanvasElement;
+  /**
+   * Screen pixels per pixel of this art. Leave it out for art drawn at the old 320x180 size, which the renderer
+   * stretches; native art says 1.
+   */
+  scale?: number;
   /** Where the body's centre sits within the canvas. */
   cx: number;
   cy: number;
@@ -93,7 +98,10 @@ export function makeMarrow(): WorldSprite {
 /* ---------- Dry Hollow's rock: a cratered asteroid with a strip mine ---------- */
 const ROCK = ['#1c1724', '#352c38', '#574a4c', '#7d6e64', '#a39280', '#cdbfa5', '#ebe0c4'];
 
-/** Where the strip mine sits relative to the rock's centre (the rig's conveyor ends here). */
+/**
+ * Where the strip mine sits relative to the rock's centre, in the rock's own pixels. The renderer places the rock
+ * so this point lands on the far end of the mining rig's conveyor (MINE_BELT_END in render.ts).
+ */
 export const ROCK_PIT = { x: -27, y: -9 };
 
 export function makeRock(): WorldSprite {

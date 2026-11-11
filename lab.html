@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Spacedude art lab</title>
+    <style>
+      body { margin: 0; padding: 16px; background: #15121f; color: #c3c6d4; font: 13px ui-monospace, monospace; }
+      h2 { font-size: 13px; font-weight: 400; color: #eab668; margin: 18px 0 6px; }
+      canvas { image-rendering: pixelated; display: block; margin: 0 0 8px; background: #1a1423; }
+      .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; }
+      figure { margin: 0; }
+      figcaption { color: #8a8fa3; margin: 2px 0 8px; }
+      nav a { color: #7fd1c7; margin-right: 12px; }
+    </style>
+  </head>
+  <body>
+    <nav id="nav"></nav>
+    <div id="lab"></div>
+    <script type="module" src="/src/lab.ts"></script>
+  </body>
+</html>

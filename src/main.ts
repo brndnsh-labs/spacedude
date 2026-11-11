@@ -1,22 +1,28 @@
 import '@fontsource/pixelify-sans';
 import '@fontsource/vt323';
 import './style.css';
-import { FlightView, VIEW_H, VIEW_W } from './flight/render';
+import { createCrt } from './crt';
+import { FlightView } from './flight/render';
 import { FootView, walkerOnScreen } from './foot/render';
 import { cratesFor, crossAirlock, newWalker, reach, stepWalk, type Kind } from './foot/world';
 import { atDock, autopilot, cargoMax, dock, dockable, holdTons, launch, newGame, stepFlight } from './sim/game';
 import { nextStop, planRoute, shortfall } from './sim/nav';
 import { clearSave, loadGame, saveGame } from './sim/save';
+import { loadSettings, saveSettings } from './settings';
 import type { FlightInput, GameState, PortId } from './sim/types';
 import { charted, port } from './sim/world';
 import { Console } from './ui/console';
 import { Hud } from './ui/hud';
+import { VIEW_H, VIEW_W } from './view';
 
 const stage = document.getElementById('stage') as HTMLDivElement;
 const canvas = document.getElementById('view') as HTMLCanvasElement;
 const flightView = new FlightView(canvas);
 const footView = new FootView(canvas);
 const hud = new Hud(document.getElementById('hud') as HTMLDivElement);
+const settings = loadSettings();
+const crt = createCrt(stage, canvas);
+crt.setEnabled(settings.crt);
 
 // `?new` in the URL throws away the save and starts over. `?seed=123` does the same in a sector of your choosing:
 // the same seed always rolls the same map, so a sector can be shared or come back to.
@@ -182,7 +188,13 @@ addEventListener('keydown', e => {
     return;
   }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (MOVE_KEYS.has(k)) {
+  if (k === 'v') {
+    // V for video: the CRT filter, on or off, wherever you are.
+    settings.crt = !settings.crt;
+    crt.setEnabled(settings.crt);
+    saveSettings(settings);
+    flash(settings.crt ? 'CRT filter on' : 'CRT filter off', 1.5);
+  } else if (MOVE_KEYS.has(k)) {
     keys.add(k);
     if (mode === 'helm') auto = false;
   } else if (mode === 'foot') {
@@ -270,6 +282,7 @@ function tick(now: number): void {
     hud.update(state, { mode, autopilot: auto, place: 'At the helm', prompt });
   }
   hud.show(!con.isOpen);
+  crt.present(now / 1000);
 }
 function frame(now: number): void {
   tick(now);

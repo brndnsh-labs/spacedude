@@ -17,6 +17,20 @@ const W = 36, H = 25, CY = 12;
 /** Point of the base sprite that sits on the ship's position (a pixel edge in x, a pixel centre in y). */
 const PIVOT_X = 18, PIVOT_Y = 12.5;
 
+/**
+ * Screen pixels per pixel of this art: 1.5 because it was drawn for the old 320x180 frame and the renderer
+ * stretches it. Native art says 1. Everything exported below is in the art's own pixels.
+ */
+export const SHIP_SCALE = 1.5;
+
+/** The engine flame, in screen pixels: colours from the nozzle outward, and how long and wide each plume is. */
+export const EXHAUST = {
+  plume: ['#fff3c4', '#ffd27a', '#eab668', '#cf8048', '#8a4238'],
+  embers: ['#cf8048', '#8a4238', '#57293a'],
+  main: { length: 18, halfWidth: 2.8 },
+  nacelle: { length: 6, halfWidth: 0.9 },
+} as const;
+
 export const SHIP_FRAMES = 64;
 /** Rotated frames are square; the ship's position maps to this point within them. */
 export const FRAME_SIZE = 46, FRAME_PIVOT_X = 23, FRAME_PIVOT_Y = 22;
