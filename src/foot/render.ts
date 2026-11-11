@@ -1,8 +1,9 @@
 import { cargoMax, holdTons } from '../sim/game';
-import type { GameState, PortId } from '../sim/types';
+import type { GameState, Port } from '../sim/types';
+import { port } from '../sim/world';
 import {
-  OBJECTS, OUTFITS, PERSON_H, PERSON_W, SHIP_THEME, STATION_THEMES, drawCrate, drawCrateSlot, drawFloor, drawWall,
-  makePerson, type FloorKind, type Theme,
+  OBJECTS, OUTFITS, PERSON_H, PERSON_W, SHIP_THEME, drawCrate, drawCrateSlot, drawFloor, drawWall,
+  makePerson, stationTheme, type FloorKind, type Theme,
 } from './art';
 import { AREAS, COLS, CRATE_SLOTS, ROWS, TILE, cratesFor, isFloor, tileAt, type AreaId, type Walker } from './world';
 
@@ -27,8 +28,8 @@ function floorUnder(area: AreaId, tx: number, ty: number): FloorKind {
   return 'metal';
 }
 
-/** Everything that never changes in an area, drawn once. */
-function bakeArea(area: AreaId, th: Theme): HTMLCanvasElement {
+/** Everything that never changes in an area, drawn once. `yard` is whether a station's shipyard counter is open. */
+function bakeArea(area: AreaId, th: Theme, yard = true): HTMLCanvasElement {
   const cv = document.createElement('canvas');
   cv.width = COLS * TILE;
   cv.height = ROWS * TILE;
@@ -44,7 +45,7 @@ function bakeArea(area: AreaId, th: Theme): HTMLCanvasElement {
       }
       drawFloor(g, floorUnder(area, tx, ty), ox, oy, tx, ty, th);
       if (ch === 'c') drawCrateSlot(g, ox, oy);
-      else if (!isFloor(ch) && ch !== 'n') OBJECTS[ch]?.(g, ox, oy);
+      else if (!isFloor(ch) && ch !== 'n') OBJECTS[ch === 'y' && !yard ? 'Y' : ch]?.(g, ox, oy);
     }
   }
   return cv;
@@ -70,7 +71,7 @@ export interface FootFrame {
 export class FootView {
   private readonly g: CanvasRenderingContext2D;
   private readonly shipDeck = bakeArea('ship', SHIP_THEME);
-  private readonly stations = new Map<PortId, HTMLCanvasElement>();
+  private readonly stations = new Map<string, HTMLCanvasElement>();
   private readonly people = {
     player: makePerson(OUTFITS.player),
     broker: makePerson(OUTFITS.broker),
@@ -94,11 +95,12 @@ export class FootView {
     }
   }
 
-  private station(id: PortId): HTMLCanvasElement {
-    let cv = this.stations.get(id);
+  private station(p: Port): HTMLCanvasElement {
+    const key = `${p.type}:${p.look}:${p.yard}`;
+    let cv = this.stations.get(key);
     if (!cv) {
-      cv = bakeArea('station', STATION_THEMES[id]);
-      this.stations.set(id, cv);
+      cv = bakeArea('station', stationTheme(p.type, p.look), p.yard);
+      this.stations.set(key, cv);
     }
     return cv;
   }
@@ -114,7 +116,8 @@ export class FootView {
       g.fillRect(0, 0, VIEW_W, VIEW_H);
     }
 
-    g.drawImage(w.area === 'ship' ? this.shipDeck : this.station(state.docked ?? 'kestrel'), off.x, off.y);
+    const here = state.docked ? port(state, state.docked) : state.ports[0];
+    g.drawImage(w.area === 'ship' ? this.shipDeck : this.station(here), off.x, off.y);
 
     if (w.area === 'ship') {
       const filled = cratesFor(holdTons(state), cargoMax(state));
@@ -135,6 +138,7 @@ export class FootView {
       }));
     } else {
       for (const n of NPCS) {
+        if (n.outfit === 'yardBoss' && !here.yard) continue; // nobody behind a shuttered counter
         const bob = Math.floor(f.time * 0.8 + n.tx) % 4 === 0 ? 1 : 0;
         g.drawImage(this.people[n.outfit].down[0], off.x + n.tx * TILE + 2, off.y + n.ty * TILE - 2 + bob);
       }

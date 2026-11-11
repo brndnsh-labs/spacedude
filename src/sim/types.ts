@@ -1,9 +1,15 @@
-export type PortId = 'kestrel' | 'marrow' | 'hollow' | 'lantern';
+/** Ports are generated per game, so an id is just a string: the four core ports keep their names, the rest are 'p4', 'p5'... */
+export type PortId = string;
 export type JobKind = 'legit' | 'grey' | 'shady';
+/** What sort of place a port is. It decides the look, the prices and the kind of work on offer. */
+export type PortType = 'ring' | 'farm' | 'mine' | 'relay';
 
 export interface Port {
   id: PortId;
   name: string;
+  type: PortType;
+  /** The neighbourhood it belongs to: the Halcyon Core, or one of the outlying reaches. */
+  region: string;
   x: number;
   y: number;
   blurb: string;
@@ -12,7 +18,14 @@ export interface Port {
   dockFee: number;
   /** Relative odds of legit / grey / shady work on this port's board. */
   mix: readonly [number, number, number];
+  /** Whether there is a shipyard here to fit upgrades. */
+  yard: boolean;
+  /** Seed for the port's colours. 0 means "as drawn": the four core ports. */
+  look: number;
 }
+
+/** A charted run between two ports, short enough for a stock tank. */
+export type Lane = readonly [PortId, PortId];
 
 export interface Job {
   id: number;
@@ -54,12 +67,18 @@ export interface ReportLine {
 }
 
 export interface GameState {
+  /** The random number generator's state. It moves on with every roll. */
   seed: number;
+  /** The seed this game was started from: the same one always gives the same sector. Optional for saves from before it was kept. */
+  startSeed?: number;
   nextJobId: number;
   day: number;
   dayFrac: number;
   lastUpkeepDay: number;
   credits: number;
+  /** This game's sector: generated once from the seed, then fixed for the life of the save. */
+  ports: Port[];
+  lanes: Lane[];
   docked: PortId | null;
   /** Port the nav computer is pointed at. */
   target: PortId | null;

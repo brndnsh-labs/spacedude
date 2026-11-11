@@ -1,7 +1,8 @@
 import { RISK, generateBoard, round5 } from './jobs';
 import { rand } from './rng';
+import { generateSector } from './sector';
 import type { FlightInput, GameState, Job, PortId, ReportLine, Result } from './types';
-import { PORTS, distance, port } from './world';
+import { distance, neighbours, port } from './world';
 
 /**
  * Flight feel (turnRate, accel, drag, brakeDrag, dockRadius, dockSpeed) is tuned by hand: leave it alone.
@@ -12,14 +13,16 @@ export const TUNING = {
   accel: 60, // px/s^2; top speed is accel / drag
   drag: 0.5,
   brakeDrag: 2.2,
-  /** Fuel per second of thrust. The longest leg (Dry Hollow - Marrow's Rest) takes about 68 of a stock 100 tank. */
+  /** Fuel per second of thrust. The longest charted lane (4800 px) takes about 80 of a stock 100 tank. */
   burn: 1.9,
   secondsPerDay: 10,
   /** Crew shares and air. With fuel, this is what a trip has to earn back: about 170 cr for an average leg. */
   upkeepPerDay: 20,
   dockRadius: 70,
   dockSpeed: 45,
+  /** A tow costs this much, plus towPerPx for every pixel the hauler has to drag you. */
   towFee: 120,
+  towPerPx: 0.04,
   /** px/s. A tow moves at stock cruising speed and the clock runs for it, so running dry is never a shortcut. */
   towSpeed: 120,
   strandedSeconds: 2.5,
@@ -57,28 +60,36 @@ export const speedOf = (s: GameState) => Math.hypot(s.ship.vx, s.ship.vy);
 /** Fuel a cruise of this distance takes, with a little margin. */
 export const fuelFor = (s: GameState, dist: number) => Math.ceil((dist / topSpeed(s)) * TUNING.burn * 1.1);
 
+/** Whether a full tank covers a leg of this length with the usual margin. */
+export const inRange = (s: GameState, dist: number) => fuelFor(s, dist) + TUNING.limpMargin <= fuelMax(s);
+/** What a tow from this far out costs. */
+export const towFee = (dist: number) => round5(TUNING.towFee + TUNING.towPerPx * dist);
+
 /**
- * The least fuel that reaches any other port from here. A docked ship can always get at least this much,
- * however deep its tab, so there is always a way to take a job and deliver it.
+ * The least fuel that reaches every port a charted lane away from here. A docked ship can always get at least
+ * this much, however deep its tab, and the lanes join every port, so there is always a way to take a job and
+ * deliver it.
  */
 export const limpFuel = (s: GameState, from: PortId) =>
-  Math.min(fuelMax(s), Math.max(...PORTS.map(p => fuelFor(s, distance(from, p.id)))) + TUNING.limpMargin);
+  Math.min(fuelMax(s), Math.max(...neighbours(s, from).map(id => fuelFor(s, distance(s, from, id)))) + TUNING.limpMargin);
 
 const ok = (msg: string): Result => ({ ok: true, msg });
 const fail = (msg: string): Result => ({ ok: false, msg });
 
 export function newGame(seed: number): GameState {
-  const home = port('kestrel');
   const state: GameState = {
     seed,
+    startSeed: seed,
     nextJobId: 1,
     day: 1,
     dayFrac: 0,
     lastUpkeepDay: 1,
     credits: TUNING.startCredits,
+    ports: [],
+    lanes: [],
     docked: 'kestrel',
     target: null,
-    ship: { x: home.x - ARM, y: home.y, vx: 0, vy: 0, angle: 0, fuel: TUNING.tank },
+    ship: { x: 0, y: 0, vx: 0, vy: 0, angle: 0, fuel: TUNING.tank },
     upgrades: { cargo: 0, tank: 0, engine: 0 },
     boards: {} as Record<PortId, Job[]>,
     boardDay: {},
@@ -90,7 +101,13 @@ export function newGame(seed: number): GameState {
     stranded: 0,
     stats: { delivered: 0, earned: 0 },
   };
-  for (const p of PORTS) postBoard(state, p.id);
+  const sector = generateSector(state);
+  state.ports = [...sector.ports];
+  state.lanes = [...sector.lanes];
+  const home = port(state, 'kestrel');
+  state.ship.x = home.x - ARM;
+  state.ship.y = home.y;
+  for (const p of state.ports) postBoard(state, p.id);
   return state;
 }
 
@@ -109,13 +126,13 @@ export function acceptJob(state: GameState, jobId: number): Result {
   state.boards[state.docked] = board.filter(j => j !== job);
   state.hold.push(job);
   if (!state.target) state.target = job.to;
-  return ok(`Loaded ${job.cargo.toLowerCase()} for ${port(job.to).name}.`);
+  return ok(`Loaded ${job.cargo.toLowerCase()} for ${port(state, job.to).name}.`);
 }
 
 /** What asking the pump for this much would really get you: fuel paid for, fuel fronted, and the bill. */
 export function fuelQuote(state: GameState, units: number | 'fill'): { paid: number; fronted: number; cost: number } {
   if (!state.docked) return { paid: 0, fronted: 0, cost: 0 };
-  const price = port(state.docked).fuelPrice;
+  const price = port(state, state.docked).fuelPrice;
   const space = fuelMax(state) - state.ship.fuel;
   const want = Math.max(0, Math.min(units === 'fill' ? space : units, space));
   const tab = Math.max(0, state.credits - TUNING.creditFloor);
@@ -149,6 +166,7 @@ export function upgradeCost(state: GameState, id: UpgradeId): number | null {
 
 export function buyUpgrade(state: GameState, id: UpgradeId): Result {
   if (!state.docked) return fail('No dock link.');
+  if (!port(state, state.docked).yard) return fail('No shipyard here.');
   const def = UPGRADES.find(u => u.id === id)!;
   const cost = upgradeCost(state, id);
   if (cost === null) return fail(`${def.name}: nothing left to fit.`);
@@ -161,7 +179,7 @@ export function buyUpgrade(state: GameState, id: UpgradeId): Result {
 export function launch(state: GameState): Result {
   if (!state.docked) return fail('Already under way.');
   if (state.ship.fuel < 1) return fail("Tank's dry. Take on fuel first.");
-  const p = port(state.docked);
+  const p = port(state, state.docked);
   state.docked = null;
   state.stranded = 0;
   state.ship.x = p.x - ARM;
@@ -220,7 +238,7 @@ export function dock(state: GameState, id: PortId): void {
 }
 
 function arrive(state: GameState, id: PortId, report: ReportLine[]): void {
-  const p = port(id);
+  const p = port(state, id);
   state.docked = id;
   state.stranded = 0;
   state.ship.x = p.x - ARM;
@@ -252,8 +270,8 @@ function arrive(state: GameState, id: PortId, report: ReportLine[]): void {
 }
 
 export function nearestPort(state: GameState): PortId {
-  let best = PORTS[0], bestD = Infinity;
-  for (const p of PORTS) {
+  let best = state.ports[0], bestD = Infinity;
+  for (const p of state.ports) {
     const d = Math.hypot(p.x - state.ship.x, p.y - state.ship.y);
     if (d < bestD) { best = p; bestD = d; }
   }
@@ -263,13 +281,13 @@ export function nearestPort(state: GameState): PortId {
 /** The port we are close and slow enough to dock at, if any. */
 export function dockable(state: GameState): PortId | null {
   if (state.docked || speedOf(state) > TUNING.dockSpeed) return null;
-  const p = port(nearestPort(state));
+  const p = port(state, nearestPort(state));
   return Math.hypot(p.x - state.ship.x, p.y - state.ship.y) <= TUNING.dockRadius ? p.id : null;
 }
 
 /** True once the ship is parked at a port's docking arm. */
 export function atDock(state: GameState, id: PortId): boolean {
-  const p = port(id);
+  const p = port(state, id);
   return Math.hypot(p.x - ARM - state.ship.x, p.y - state.ship.y) < 16 && speedOf(state) < 20;
 }
 
@@ -282,9 +300,10 @@ function passTime(state: GameState, seconds: number): void {
 }
 
 function tow(state: GameState): void {
-  const p = port(nearestPort(state));
-  passTime(state, Math.hypot(p.x - state.ship.x, p.y - state.ship.y) / TUNING.towSpeed);
-  arrive(state, p.id, [{ text: 'Ran dry. Towed in by a passing hauler', amount: -TUNING.towFee, tag: 'tow' }]);
+  const p = port(state, nearestPort(state));
+  const far = Math.hypot(p.x - state.ship.x, p.y - state.ship.y);
+  passTime(state, far / TUNING.towSpeed);
+  arrive(state, p.id, [{ text: 'Ran dry. Towed in by a passing hauler', amount: -towFee(far), tag: 'tow' }]);
 }
 
 /** Advance the flight by dt seconds. Returns 'towed' if we ran dry and got hauled to port. */
@@ -323,7 +342,7 @@ const wrapAngle = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
 
 /** Flight input that cruises to a port's docking arm and stops there. */
 export function autopilot(state: GameState, id: PortId): FlightInput {
-  const p = port(id), s = state.ship;
+  const p = port(state, id), s = state.ship;
   const dx = p.x - ARM - s.x, dy = p.y - s.y;
   const d = Math.hypot(dx, dy) || 1e-6;
   const speed = speedOf(state);

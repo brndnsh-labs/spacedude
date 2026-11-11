@@ -1,8 +1,10 @@
 import {
   TUNING, UPGRADES, acceptJob, buyFuel, buyUpgrade, cargoMax, fuelFor, fuelMax, fuelQuote, holdTons, upgradeCost,
 } from '../sim/game';
-import type { GameState, Result } from '../sim/types';
-import { PORTS, port } from '../sim/world';
+import { nextStop, planRoute, routeLegs } from '../sim/nav';
+import { PORT_TYPES } from '../sim/sector';
+import type { GameState, PortId, Result } from '../sim/types';
+import { charted, port } from '../sim/world';
 
 export type Tab = 'log' | 'port' | 'jobs' | 'hold' | 'yard' | 'nav';
 
@@ -26,6 +28,8 @@ export interface ConsoleHost {
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 const num = (n: number) => Math.round(n).toLocaleString('en-US');
 const mm = (d: number) => `${(d / 1000).toFixed(1)} Mm`;
+/** How many ports the nav list shows at once. */
+const NAV_ROWS = 7;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${num(n)}`;
 
 /**
@@ -74,7 +78,7 @@ export class Console {
       case 'jobs': return s.docked ? s.boards[s.docked].length : 0;
       case 'hold': return s.hold.length;
       case 'yard': return UPGRADES.length;
-      case 'nav': return PORTS.length;
+      case 'nav': return s.ports.length;
     }
   }
 
@@ -109,7 +113,7 @@ export class Console {
         const job = s.hold[i];
         if (job) {
           s.target = job.to;
-          r = { ok: true, msg: `Course set: ${port(job.to).name}.` };
+          r = { ok: true, msg: `Course set: ${port(s, job.to).name}.` };
         }
         break;
       }
@@ -117,7 +121,7 @@ export class Console {
         r = buyUpgrade(s, UPGRADES[i].id);
         break;
       case 'nav': {
-        const p = PORTS[i];
+        const p = s.ports[i];
         if (p.id === s.docked) r = { ok: false, msg: 'You are already here.' };
         else {
           s.target = p.id;
@@ -173,7 +177,7 @@ export class Console {
 
     this.el.innerHTML = `
       <div class="c-head">
-        <span>${esc(s.docked ? port(s.docked).name : 'Under way')}</span>
+        <span>${esc(s.docked ? port(s, s.docked).name : 'Under way')}</span>
         <span>Day ${s.day}</span>
         <span class="${s.credits < 0 ? 'neg' : ''}">Cr ${num(s.credits)}</span>
         <span>Fuel ${Math.round(s.ship.fuel)}/${fuelMax(s)}</span>
@@ -201,11 +205,13 @@ export class Console {
       <div class="sect">Last port call</div>
       ${report || '<div class="dim">Nothing to report.</div>'}
       <div class="sect">To date</div>
-      <div class="dim">${s.stats.delivered} jobs delivered, ${num(s.stats.earned)} cr earned.</div>`;
+      <div class="dim">${s.stats.delivered} jobs delivered, ${num(s.stats.earned)} cr earned.</div>
+      ${s.startSeed === undefined ? '' : `<div class="sect">Sector</div>
+      <div class="dim">Seed ${s.startSeed}. Add ?seed=${s.startSeed} to the address for a new game in this same sector.</div>`}`;
   }
 
   private portTab(s: GameState): string {
-    const p = port(s.docked!);
+    const p = port(s, s.docked!);
     // Quote what the pump will really give: a maxed tab buys less, and the harbormaster may front some.
     const quote = (label: string, units: number | 'fill') => {
       const q = fuelQuote(s, units);
@@ -225,21 +231,24 @@ export class Console {
     if (!board.length) return `<div class="dim">The board's empty. Try another port.</div>`;
     const free = cargoMax(s) - holdTons(s);
     const rows = board.map((j, i) => this.row(i, `r-jobs${j.tons > free ? ' nofit' : ''}`, [
-      esc(j.cargo), esc(port(j.to).name), `${j.tons} t`, `Day ${j.due}`, `${num(j.pay)} cr`, j.kind,
+      esc(j.cargo), esc(port(s, j.to).name), `${j.tons} t`, `Day ${j.due}`, `${num(j.pay)} cr`, j.kind,
     ])).join('');
     const j = board[this.sel.jobs];
+    const to = port(s, j.to), run = charted(s, s.docked!, j.to);
+    const where = run.hops > 1 ? `${mm(run.dist)} out, ${run.hops} lanes away in ${esc(to.region)}.` : `${mm(run.dist)} out, one lane away.`;
     return `
       <div class="row r-jobs dim"><span>Cargo</span><span>To</span><span>Load</span><span>Due</span><span>Pays</span><span>Type</span></div>
       ${rows}
       <div class="sect">From ${esc(j.client)}</div>
       <div>${esc(j.note)}</div>
+      <div class="dim">${esc(to.name)}: ${where}</div>
       <div class="dim">${j.tons > free ? `Won't fit: needs ${j.tons} t, ${free} t free.` : `Needs ${j.tons} t of your ${free} t free.`} Late delivery pays ${Math.round(TUNING.lateFactor * 100)}%.</div>`;
   }
 
   private holdTab(s: GameState): string {
     if (!s.hold.length) return `<div class="dim">The hold is empty. Ask about work at a station.</div>`;
     const rows = s.hold.map((j, i) => this.row(i, 'r-hold', [
-      esc(j.cargo), esc(port(j.to).name), `${j.tons} t`, s.day > j.due ? 'Late' : `Day ${j.due}`, `${num(j.pay)} cr`,
+      esc(j.cargo), esc(port(s, j.to).name), `${j.tons} t`, s.day > j.due ? 'Late' : `Day ${j.due}`, `${num(j.pay)} cr`,
     ])).join('');
     return `
       <div class="row r-hold dim"><span>Cargo</span><span>Deliver to</span><span>Load</span><span>Due</span><span>Pays</span></div>
@@ -260,44 +269,85 @@ export class Console {
       <div class="dim">${s.credits < 0 ? 'Settle your tab before you talk to me about fittings.' : 'Cash up front. No tabs, no trades.'}</div>`;
   }
 
+  /** Fuel and legs to each port from where the ship is now. */
+  private reach(s: GameState, id: PortId): { dist: number; fuel: number; legs: number } {
+    if (s.docked) {
+      const legs = routeLegs(s, s.docked, id);
+      return { dist: legs.reduce((a, l) => a + l.dist, 0), fuel: legs.reduce((a, l) => a + fuelFor(s, l.dist), 0), legs: legs.length };
+    }
+    const p = port(s, id), dist = Math.hypot(p.x - s.ship.x, p.y - s.ship.y);
+    return { dist, fuel: fuelFor(s, dist), legs: 1 };
+  }
+
   private navTab(s: GameState): string {
-    const ship = s.ship;
-    const rows = PORTS.map((p, i) => {
-      const d = Math.hypot(p.x - ship.x, p.y - ship.y);
+    const sel = this.sel.nav, n = s.ports.length;
+    // The list scrolls: keep the selected port in a window of a few rows.
+    const top = Math.max(0, Math.min(n - NAV_ROWS, sel - Math.floor(NAV_ROWS / 2)));
+    const rows = s.ports.slice(top, top + NAV_ROWS).map((p, k) => {
+      const i = top + k, r = this.reach(s, p.id);
       const drops = s.hold.filter(j => j.to === p.id).length;
       const here = p.id === s.docked;
       return this.row(i, 'r-nav', [
         `${p.id === s.target ? '&gt;' : '&nbsp;'} ${esc(p.name)}`,
-        here ? 'Here' : mm(d),
-        here ? '' : `${fuelFor(s, d)} f`,
+        here ? 'Here' : mm(r.dist),
+        here ? '' : `${r.fuel} f`,
+        here || r.legs < 2 ? '' : `${r.legs} legs`,
         drops ? `${drops} drop${drops > 1 ? 's' : ''}` : '',
       ]);
     }).join('');
+
+    const p = s.ports[sel], r = this.reach(s, p.id);
+    let way = 'You are docked here.';
+    if (p.id !== s.docked) {
+      if (!s.docked) way = r.fuel > s.ship.fuel ? `Straight there needs ${r.fuel} fuel. You have ${Math.round(s.ship.fuel)}.` : `Straight there: ${r.fuel} fuel.`;
+      else if (r.legs > 1) way = `Too far for one tank. Via ${planRoute(s, s.docked, p.id).slice(0, -1).map(id => esc(port(s, id).name)).join(', ')}.`;
+      else way = r.fuel > s.ship.fuel ? `One leg, but it needs ${r.fuel} fuel. You have ${Math.round(s.ship.fuel)}.` : 'One leg on this tank.';
+    }
     return `<div class="nav">${this.navMap(s)}<div>
-      <div class="row r-nav dim"><span>&nbsp; Port</span><span>Range</span><span>Fuel</span><span>Cargo</span></div>
+      <div class="row r-nav dim"><span>&nbsp; Port ${top > 0 ? '^' : ''}${top + NAV_ROWS < n ? 'v' : ''}</span><span>Range</span><span>Fuel</span><span>Route</span><span>Cargo</span></div>
       ${rows}
-      <div class="sect">Course</div>
-      <div class="dim">${s.target ? `Laid in for ${esc(port(s.target).name)}.` : 'None laid in.'} At the helm, Q engages the autopilot.</div>
+      <div class="sect">${esc(p.name)} - ${esc(p.region)}</div>
+      <div>${PORT_TYPES[p.type].label}. Fuel ${p.fuelPrice.toFixed(1)} cr. ${p.yard ? 'Shipyard.' : 'No shipyard.'}</div>
+      <div class="dim">${way}</div>
+      <div class="dim">${s.target ? `Course laid in: ${esc(port(s, s.target).name)}.` : 'No course laid in.'}</div>
     </div></div>`;
   }
 
   private navMap(s: GameState): string {
-    let grid = '';
-    for (let x = -1500; x <= 3000; x += 500) grid += `M${x},-1100V2900`;
-    for (let y = -1000; y <= 2900; y += 500) grid += `M-1500,${y}H3000`;
-    const selected = PORTS[this.sel.nav];
-    const ports = PORTS.map(p => `
-      <circle cx="${p.x}" cy="${p.y}" r="70"/>
-      ${s.hold.some(j => j.to === p.id) ? `<circle cx="${p.x}" cy="${p.y}" r="28" class="fill"/>` : ''}
-      ${p === selected ? `<circle cx="${p.x}" cy="${p.y}" r="150" class="dash"/>` : ''}
-      ${p.id === s.target ? `<path d="M${p.x - 210},${p.y - 120}v-90h90M${p.x + 120},${p.y - 210}h90v90M${p.x + 210},${p.y + 120}v90h-90M${p.x - 120},${p.y + 210}h-90v-90"/>` : ''}
-      <text x="${p.x}" y="${p.y + 400}">${esc(p.name)}</text>`).join('');
-    const t = s.target ? port(s.target) : null;
-    return `<svg class="map" viewBox="-1500 -1100 4500 4000" role="img" aria-label="System map">
-      <path d="${grid}" class="grid"/>
-      ${t ? `<path d="M${s.ship.x.toFixed(0)},${s.ship.y.toFixed(0)}L${t.x},${t.y}" class="dash"/>` : ''}
+    const xs = s.ports.map(p => p.x), ys = s.ports.map(p => p.y);
+    const x0 = Math.min(...xs), x1 = Math.max(...xs), y0 = Math.min(...ys), y1 = Math.max(...ys);
+    // One unit of chart furniture: dots, labels and the ship are sized from the span of the sector.
+    const u = Math.max(x1 - x0, y1 - y0) / 100, pad = u * 12;
+    const at = (id: PortId) => port(s, id);
+    const lanes = s.lanes.map(([a, b]) => `M${at(a).x},${at(a).y}L${at(b).x},${at(b).y}`).join('');
+    const selected = s.ports[this.sel.nav];
+    const ports = s.ports.map(p => `
+      <circle cx="${p.x}" cy="${p.y}" r="${u * 1.3}" class="${s.hold.some(j => j.to === p.id) ? 'fill' : 'dot'}"/>
+      ${p === selected ? `<circle cx="${p.x}" cy="${p.y}" r="${u * 3.2}" class="dash"/>` : ''}
+      ${p.id === s.target ? `<path d="M${p.x - u * 4},${p.y - u * 2.2}v${-u * 1.8}h${u * 1.8}M${p.x + u * 2.2},${p.y - u * 4}h${u * 1.8}v${u * 1.8}M${p.x + u * 4},${p.y + u * 2.2}v${u * 1.8}h${-u * 1.8}M${p.x - u * 2.2},${p.y + u * 4}h${-u * 1.8}v${-u * 1.8}"/>` : ''}`).join('');
+    // Region names sit above their ports; the selected port is named too.
+    const regions = [...new Set(s.ports.map(p => p.region))].map(name => {
+      const mine = s.ports.filter(p => p.region === name);
+      const cx = mine.reduce((a, p) => a + p.x, 0) / mine.length, top = Math.min(...mine.map(p => p.y));
+      return `<text x="${cx.toFixed(0)}" y="${(top - u * 4.5).toFixed(0)}" class="region">${esc(name)}</text>`;
+    }).join('');
+    const label = `<text x="${selected.x}" y="${selected.y + u * 8.5}">${esc(selected.name)}</text>`;
+
+    // The course: from the ship through each stop to the far end.
+    let course = '';
+    const stop = nextStop(s);
+    if (s.target && stop) {
+      const stops = [stop, ...planRoute(s, stop, s.target)];
+      course = `<path d="M${s.ship.x.toFixed(0)},${s.ship.y.toFixed(0)}${stops.map(id => `L${at(id).x},${at(id).y}`).join('')}" class="course"/>`;
+    }
+    const ship = `<path d="M${u * 3},0L${-u * 2},${-u * 1.8}L${-u * 2},${u * 1.8}Z" class="fill" transform="translate(${s.ship.x.toFixed(0)} ${s.ship.y.toFixed(0)}) rotate(${((s.ship.angle * 180) / Math.PI).toFixed(0)})"/>`;
+    return `<svg class="map" viewBox="${x0 - pad} ${y0 - pad} ${x1 - x0 + pad * 2} ${y1 - y0 + pad * 2}" style="--u:${u}px" role="img" aria-label="Sector chart">
+      <path d="${lanes}" class="lane"/>
+      ${course}
       ${ports}
-      <path d="M130,0L-80,-75L-80,75Z" class="fill" transform="translate(${s.ship.x.toFixed(0)} ${s.ship.y.toFixed(0)}) rotate(${((s.ship.angle * 180) / Math.PI).toFixed(0)})"/>
+      ${regions}
+      ${label}
+      ${ship}
     </svg>`;
   }
 }

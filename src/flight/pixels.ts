@@ -152,3 +152,51 @@ export class PixelBuf {
     return cv;
   }
 }
+
+/* ---------- recolouring: one drawing, many places ---------- */
+
+/** Rotate an 0xRRGGBB colour's hue by `deg` degrees, keeping its lightness and saturation. */
+function shiftRgb(n: number, deg: number): number {
+  const r = (n >> 16) / 255, g = ((n >> 8) & 255) / 255, b = (n & 255) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b), l = (max + min) / 2, d = max - min;
+  if (d < 1e-6) return n;
+  const s = d / (1 - Math.abs(2 * l - 1));
+  let h = max === r ? ((g - b) / d) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  h = mod(h * 60 + deg, 360);
+  const c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs(((h / 60) % 2) - 1)), m = l - c / 2;
+  const [r1, g1, b1] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x] : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
+  const ch = (v: number) => Math.max(0, Math.min(255, Math.round((v + m) * 255)));
+  return (ch(r1) << 16) | (ch(g1) << 8) | ch(b1);
+}
+
+export function shiftHex(hex: string, deg: number): string {
+  return deg ? `#${shiftRgb(rgb(hex), deg).toString(16).padStart(6, '0')}` : hex;
+}
+
+/** A copy of a sprite with every colour's hue rotated. */
+export function hueShifted(src: HTMLCanvasElement, deg: number): HTMLCanvasElement {
+  if (!deg) return src;
+  const cv = document.createElement('canvas');
+  cv.width = src.width;
+  cv.height = src.height;
+  const g = cv.getContext('2d')!;
+  g.drawImage(src, 0, 0);
+  const img = g.getImageData(0, 0, cv.width, cv.height), d = img.data;
+  const memo = new Map<number, number>();
+  for (let i = 0; i < d.length; i += 4) {
+    if (!d[i + 3]) continue;
+    const n = (d[i] << 16) | (d[i + 1] << 8) | d[i + 2];
+    let out = memo.get(n);
+    if (out === undefined) memo.set(n, (out = shiftRgb(n, deg)));
+    d[i] = out >> 16;
+    d[i + 1] = (out >> 8) & 255;
+    d[i + 2] = out & 255;
+  }
+  g.putImageData(img, 0, 0);
+  return cv;
+}
+
+/** The hue turn for a generated port's art. 0 for the core ports, which are shown as drawn. */
+export function hueFor(look: number, spread: readonly number[]): number {
+  return look ? spread[look % spread.length] : 0;
+}

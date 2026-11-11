@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
   ARM, TUNING, UPGRADES, acceptJob, atDock, autopilot, buyFuel, buyUpgrade, cargoMax, dock, fuelMax, holdTons, launch, newGame,
-  stepFlight,
+  stepFlight, towFee,
 } from './game';
 import { BOARD } from './jobs';
 import type { GameState, PortId } from './types';
-import { PORTS, port } from './world';
+import { CORE, port } from './world';
 
 function flyTo(state: GameState, target: PortId, maxSeconds: number): number {
   for (let i = 0; i < maxSeconds * 60; i++) {
@@ -19,7 +19,7 @@ describe('job boards', () => {
   it('give every port honest work that fits a stock ship, and never send cargo to its own port', () => {
     for (const seed of [1, 2, 3, 99]) {
       const s = newGame(seed);
-      for (const p of PORTS) {
+      for (const p of s.ports) {
         const board = s.boards[p.id];
         expect(board.length).toBeGreaterThanOrEqual(4);
         expect(board.some(j => j.kind === 'legit' && j.tons <= BOARD.starterMaxTons)).toBe(true);
@@ -60,7 +60,7 @@ describe('docking', () => {
     expect(s.stats.delivered).toBe(1);
     const paid = s.report.find(l => l.text.startsWith('Delivered'))!.amount!;
     expect(paid).toBeGreaterThanOrEqual(job.pay);
-    expect(s.credits).toBe(TUNING.startCredits + paid - port(job.to).dockFee);
+    expect(s.credits).toBe(TUNING.startCredits + paid - port(s, job.to).dockFee);
   });
 
   it('pays less for late deliveries', () => {
@@ -80,7 +80,7 @@ describe('money', () => {
   it('sells fuel on a tab, but only down to the credit floor', () => {
     // A ship with enough aboard to reach the next port gets no charity (balance.test.ts covers the one that has not).
     const s = newGame(1);
-    const price = port('kestrel').fuelPrice;
+    const price = port(s, 'kestrel').fuelPrice;
     s.ship.fuel = 90;
     s.credits = TUNING.creditFloor + 10;
     expect(buyFuel(s, 'fill').ok).toBe(true);
@@ -99,12 +99,25 @@ describe('money', () => {
     expect(cargoMax(s)).toBe(TUNING.cargo + TUNING.cargoStep);
     expect(s.credits).toBe(0);
   });
+
+  it('fits upgrades only where there is a shipyard', () => {
+    const s = newGame(1);
+    s.credits = 5000;
+    launch(s);
+    dock(s, 'marrow');
+    expect(port(s, 'marrow').yard).toBe(false);
+    expect(buyUpgrade(s, 'engine').ok).toBe(false);
+    expect(s.upgrades.engine).toBe(0);
+    launch(s);
+    dock(s, 'hollow');
+    expect(buyUpgrade(s, 'engine').ok).toBe(true);
+  });
 });
 
 describe('flight', () => {
-  it('autopilot reaches every port from every other on one tank', () => {
-    for (const from of PORTS) {
-      for (const to of PORTS) {
+  it('autopilot reaches every core port from every other on one tank', () => {
+    for (const from of CORE) {
+      for (const to of CORE) {
         if (from === to) continue;
         const s = newGame(1);
         s.docked = from.id;
@@ -130,7 +143,10 @@ describe('flight', () => {
     }
     expect(towed).toBe(true);
     expect(s.docked).not.toBeNull();
-    expect(s.ship.x).toBe(port(s.docked!).x - ARM);
-    expect(s.report[0].amount).toBe(-TUNING.towFee);
+    expect(s.docked).toBe('kestrel');
+    expect(s.ship.x).toBe(port(s, s.docked!).x - ARM);
+    // The fee grows with how far the hauler has to drag you.
+    expect(s.report[0].amount).toBe(-towFee(Math.hypot(1200, 300)));
+    expect(towFee(Math.hypot(1200, 300))).toBeGreaterThan(TUNING.towFee);
   });
 });

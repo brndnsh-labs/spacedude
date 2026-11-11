@@ -1,8 +1,9 @@
-import type { PortId } from '../sim/types';
-import { LIGHT, PixelBuf, bay, rng, shade } from './pixels';
+import type { PortType } from '../sim/types';
+import { LIGHT, PixelBuf, bay, hueFor, hueShifted, rng, shade } from './pixels';
 
 /**
- * One station per port, drawn from above and centred on the port's position.
+ * One station design per port type, drawn from above and centred on the port's position.
+ * The four core ports are shown as drawn; generated ports get the same build in other colours.
  * Each has a docking arm pointing left whose collar ends where a berthed ship's
  * nose sits (the ship itself is centred ARM = 58 px left of the port).
  */
@@ -438,6 +439,10 @@ function lantern(): StationSprite {
   return { canvas: a.finish(), half: HALF, extent: 48, lights, lamp: { x: 0, y: 0 } };
 }
 
-export function makeStations(): Record<PortId, StationSprite> {
-  return { kestrel: kestrel(), marrow: marrow(), hollow: hollow(), lantern: lantern() };
+const BUILD: Record<PortType, () => StationSprite> = { ring: kestrel, farm: marrow, mine: hollow, relay: lantern };
+const HUES = [-48, 34, -26, 58, -62, 22];
+
+export function makeStation(type: PortType, look: number): StationSprite {
+  const st = BUILD[type]();
+  return { ...st, canvas: hueShifted(st.canvas, hueFor(look, HUES)) };
 }

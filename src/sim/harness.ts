@@ -10,8 +10,8 @@ import {
   stepFlight, upgradeCost,
 } from './game';
 import type { UpgradeId } from './game';
-import type { GameState, Job, JobKind, PortId } from './types';
-import { PORTS, port } from './world';
+import type { GameState, Job, JobKind, Port, PortId } from './types';
+import { port } from './world';
 
 // ---------------------------------------------------------------------------------------------
 // Playing one game
@@ -83,11 +83,14 @@ export interface GameLog {
   tows: number;
   /** Charity received: debts waved off at the credit floor, plus the pump value of fuel fronted to a broke ship. */
   aid: number;
-  /** Change in net worth (credits + money put into upgrades) over each dock-to-dock trip. */
+  /**
+   * Change in net worth (credits + money put into upgrades) over each run: from one port call where cargo
+   * came off (or the hold was empty) to the next. A long haul with stopovers is one run, not several.
+   */
   tripNets: number[];
-  /** The port each of those trips set out from. */
-  tripFrom: PortId[];
-  visits: Record<PortId, number>;
+  /** The port group each of those runs set out from. */
+  tripFrom: Group[];
+  visits: Record<Group, number>;
   /** Times the balance was seen below the credit floor (should be zero). */
   belowFloor: number;
   /** Set if the player ended up docked with no way to leave. */
@@ -101,6 +104,15 @@ export interface GameLog {
 }
 
 const gameDays = (s: GameState) => s.day - 1 + s.dayFrac;
+
+/**
+ * Ports are tallied in groups that mean the same thing in every game: each core port by name,
+ * and the generated ones by what kind of place they are.
+ */
+export const GROUPS = ['kestrel', 'marrow', 'hollow', 'lantern', 'far ring', 'far farm', 'far mine', 'far relay'] as const;
+export type Group = (typeof GROUPS)[number];
+export const groupOf = (p: Port): Group => (p.look === 0 ? (p.id as Group) : `far ${p.type}`);
+const groupTally = () => Object.fromEntries(GROUPS.map(g => [g, 0])) as Record<Group, number>;
 
 /**
  * True if a docked player has some way to get under way: launch as-is, or after buying fuel.
@@ -144,7 +156,7 @@ export function play(bot: Bot, seed: number, opts: PlayOptions): GameLog {
     bot: bot.name, seed, days: 0, trips: 0, deliveries: [], upgrades: [],
     startCredits: state.credits, endCredits: state.credits, minCredits: state.credits,
     upgradeSpend: 0, fuelUnits: 0, fuelCredits: 0, tows: 0, aid: 0, tripNets: [], tripFrom: [], belowFloor: 0,
-    visits: { kestrel: 0, marrow: 0, hollow: 0, lantern: 0 }, stuck: null, redocks: 0, layovers: 0, lost: 0, final: state,
+    visits: groupTally(), stuck: null, redocks: 0, layovers: 0, lost: 0, final: state,
   };
   const seen = () => {
     log.minCredits = Math.min(log.minCredits, state.credits);
@@ -171,7 +183,7 @@ export function play(bot: Bot, seed: number, opts: PlayOptions): GameLog {
       log.fuelUnits += got;
       log.fuelCredits += spent;
       // Anything pumped beyond what was paid for (bar the rounding) was fronted by the harbormaster.
-      log.aid += Math.max(0, Math.floor(got * port(state.docked!).fuelPrice) - spent);
+      log.aid += Math.max(0, Math.floor(got * port(state, state.docked!).fuelPrice) - spent);
       seen();
       return r.ok;
     },
@@ -210,8 +222,9 @@ export function play(bot: Bot, seed: number, opts: PlayOptions): GameLog {
 
   const maxStops = opts.maxStops ?? 2000;
   let worth = state.credits;
+  let runFrom = groupOf(port(state, state.docked!));
   for (let stop = 0; stop < maxStops && gameDays(state) < opts.days; stop++) {
-    const from = state.docked!;
+    const from = groupOf(port(state, state.docked!));
     log.visits[from]++;
     const target = bot.visit(dockside);
     state.target = target;
@@ -250,10 +263,14 @@ export function play(bot: Bot, seed: number, opts: PlayOptions): GameLog {
       }
     }
     seen();
-    const now = state.credits + log.upgradeSpend;
-    log.tripNets.push(now - worth);
-    log.tripFrom.push(from);
-    worth = now;
+    // A stopover with cargo still aboard for somewhere else is the middle of a run, not the end of one.
+    if (landed.length || !state.hold.length) {
+      const now = state.credits + log.upgradeSpend;
+      log.tripNets.push(now - worth);
+      log.tripFrom.push(runFrom);
+      worth = now;
+      runFrom = groupOf(port(state, state.docked!));
+    }
   }
   log.days = gameDays(state);
   log.endCredits = state.credits;
@@ -314,9 +331,9 @@ export interface Summary {
   stuckShare: number;
   lost: number;
   belowFloor: number;
-  visits: Record<PortId, number>;
+  visits: Record<Group, number>;
   /** Average net of a trip by the port it set out from: is any port a bad place to wake up? */
-  netFrom: Record<PortId, number>;
+  netFrom: Record<Group, number>;
 }
 
 const netOf = (g: GameLog) => g.endCredits - g.startCredits + g.upgradeSpend;
@@ -328,14 +345,14 @@ export function summarise(logs: readonly GameLog[]): Summary {
   const deliveries = logs.flatMap(g => g.deliveries);
   const totalTrips = logs.reduce((a, g) => a + g.trips, 0);
   const totalDays = logs.reduce((a, g) => a + g.days, 0);
-  const totalVisits = logs.reduce((a, g) => a + PORTS.reduce((b, p) => b + g.visits[p.id], 0), 0);
+  const totalVisits = logs.reduce((a, g) => a + GROUPS.reduce((b, p) => b + g.visits[p], 0), 0);
   const nth = (n: number, pick: (u: UpgradeEvent) => number) =>
     quantile(logs.filter(g => g.upgrades.length > n).map(g => pick(g.upgrades[n])), 0.5);
   const maxUp = Math.max(0, ...logs.map(g => g.upgrades.length));
-  const visits = {} as Record<PortId, number>, netFrom = {} as Record<PortId, number>;
-  for (const p of PORTS) {
-    visits[p.id] = logs.reduce((a, g) => a + g.visits[p.id], 0) / Math.max(totalVisits, 1);
-    netFrom[p.id] = mean(logs.flatMap(g => g.tripNets.filter((_, i) => g.tripFrom[i] === p.id)));
+  const visits = groupTally(), netFrom = groupTally();
+  for (const p of GROUPS) {
+    visits[p] = logs.reduce((a, g) => a + g.visits[p], 0) / Math.max(totalVisits, 1);
+    netFrom[p] = mean(logs.flatMap(g => g.tripNets.filter((_, i) => g.tripFrom[i] === p)));
   }
   return {
     bot: logs[0].bot,
@@ -494,8 +511,8 @@ export function upgradeTable(rows: readonly Summary[]): string {
 
 export function portsTable(rows: readonly Summary[]): string {
   return table(
-    ['strategy', ...PORTS.map(p => `${p.id} visits`), ...PORTS.map(p => `net from ${p.id}`)],
-    rows.map(s => [s.bot, ...PORTS.map(p => pct(s.visits[p.id])), ...PORTS.map(p => n0(s.netFrom[p.id]))]),
+    ['strategy', ...GROUPS.map(p => `${p} visits`), ...GROUPS.map(p => `net from ${p}`)],
+    rows.map(s => [s.bot, ...GROUPS.map(p => pct(s.visits[p])), ...GROUPS.map(p => n0(s.netFrom[p]))]),
   );
 }
 

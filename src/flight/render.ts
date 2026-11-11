@@ -1,20 +1,26 @@
-import type { GameState, PortId } from '../sim/types';
-import { PORTS, port } from '../sim/world';
-import { PixelBuf, bay, mod } from './pixels';
+import { nextStop } from '../sim/nav';
+import type { GameState, Port, PortType } from '../sim/types';
+import { port } from '../sim/world';
+import { PixelBuf, bay, hueFor, hueShifted, mod } from './pixels';
 import { FRAME_PIVOT_X, FRAME_PIVOT_Y, SHIP_FRAMES, SHIP_POINTS, makeShipFrames } from './ship';
 import { makeNebula, makeStarLayers, type SkyTile } from './sky';
-import { makeStations, type StationSprite } from './stations';
+import { makeStation, type StationSprite } from './stations';
 import { ROCK_PIT, makeGiant, makeMarrow, makeOssa, makeRock, type WorldSprite } from './worlds';
 
 export const VIEW_W = 320, VIEW_H = 180;
 
-/** Where each port's neighbouring world sits, relative to the port. */
-const WORLD_OFFSET: Record<PortId, { dx: number; dy: number }> = {
-  kestrel: { dx: -205, dy: 88 },
-  marrow: { dx: 96, dy: -62 },
-  hollow: { dx: 66 - ROCK_PIT.x, dy: 32 - ROCK_PIT.y }, // so the rig's conveyor lands in the strip mine
-  lantern: { dx: 140, dy: -90 },
+/**
+ * Where a port's neighbouring world sits, relative to the port. The first of each is the core port's;
+ * generated ports of that type pick one by their look.
+ */
+const WORLD_OFFSET: Record<PortType, readonly { dx: number; dy: number }[]> = {
+  ring: [{ dx: -205, dy: 88 }, { dx: 150, dy: 96 }, { dx: -170, dy: -110 }],
+  farm: [{ dx: 96, dy: -62 }, { dx: -110, dy: -70 }, { dx: 100, dy: 80 }],
+  mine: [{ dx: 66 - ROCK_PIT.x, dy: 32 - ROCK_PIT.y }], // so the rig's conveyor lands in the strip mine
+  relay: [{ dx: 140, dy: -90 }, { dx: -150, dy: -80 }, { dx: 130, dy: 100 }],
 };
+const WORLD_BUILD: Record<PortType, () => WorldSprite> = { ring: makeOssa, farm: makeMarrow, mine: makeRock, relay: makeGiant };
+const WORLD_HUES = [-55, 40, -30, 70, 150, -95, 25];
 
 interface Ember { x: number; y: number; vx: number; vy: number; life: number }
 
@@ -34,10 +40,10 @@ export class FlightView {
   private readonly nebula = makeNebula();
   private readonly stars = makeStarLayers();
   private readonly ship = makeShipFrames();
-  private readonly stations = makeStations();
-  private readonly worlds: Record<PortId, WorldSprite> = {
-    kestrel: makeOssa(), marrow: makeMarrow(), hollow: makeRock(), lantern: makeGiant(),
-  };
+  /** Sprites are painted the first time a port comes into view, and kept by type and look. */
+  private readonly stations = new Map<string, StationSprite>();
+  private readonly worlds = new Map<string, WorldSprite>();
+  private readonly worldBase = new Map<PortType, WorldSprite>();
   private readonly arrow = makeArrow('#eab668');
   private embers: Ember[] = [];
   private thrust = 0;
@@ -45,6 +51,26 @@ export class FlightView {
 
   constructor(canvas: HTMLCanvasElement) {
     this.g = canvas.getContext('2d')!;
+  }
+
+  private station(p: Port): StationSprite {
+    const key = `${p.type}:${p.look}`;
+    let st = this.stations.get(key);
+    if (!st) this.stations.set(key, (st = makeStation(p.type, p.look)));
+    return st;
+  }
+
+  private world(p: Port): WorldSprite & { dx: number; dy: number } {
+    const key = `${p.type}:${p.look}`;
+    let w = this.worlds.get(key);
+    if (!w) {
+      let base = this.worldBase.get(p.type);
+      if (!base) this.worldBase.set(p.type, (base = WORLD_BUILD[p.type]()));
+      w = { ...base, canvas: hueShifted(base.canvas, hueFor(p.look, WORLD_HUES)) };
+      this.worlds.set(key, w);
+    }
+    const spots = WORLD_OFFSET[p.type];
+    return { ...w, ...spots[p.look % spots.length] };
   }
 
   /** Draw a repeating tile scrolled by (ox, oy); returns where its origin landed. */
@@ -79,13 +105,15 @@ export class FlightView {
     }
 
     // worlds, then the stations in front of them
-    for (const p of PORTS) {
-      const w = this.worlds[p.id], o = WORLD_OFFSET[p.id];
-      const x = p.x + o.dx - w.cx - camX, y = p.y + o.dy - w.cy - camY;
+    // Only ports near the view are worth a look: nothing drawn for one reaches farther than this.
+    const near = state.ports.filter(p => Math.abs(p.x - s.x) < 520 && Math.abs(p.y - s.y) < 440);
+    for (const p of near) {
+      const w = this.world(p);
+      const x = p.x + w.dx - w.cx - camX, y = p.y + w.dy - w.cy - camY;
       if (x < VIEW_W && y < VIEW_H && x + w.canvas.width > 0 && y + w.canvas.height > 0) g.drawImage(w.canvas, x, y);
     }
-    for (const p of PORTS) {
-      const st = this.stations[p.id], sx = p.x - camX, sy = p.y - camY;
+    for (const p of near) {
+      const st = this.station(p), sx = p.x - camX, sy = p.y - camY;
       if (sx < -st.half || sy < -st.half || sx > VIEW_W + st.half || sy > VIEW_H + st.half) continue;
       if (st.lamp) this.drawBeam(sx + st.lamp.x, sy + st.lamp.y, time);
       g.drawImage(st.canvas, sx - st.half, sy - st.half);
@@ -225,13 +253,17 @@ export class FlightView {
     }
   }
 
-  /** Brackets around the destination when it is on screen, a chevron at the screen edge when it is not. */
+  /**
+   * Brackets around where we are headed when it is on screen, a chevron at the screen edge when it is not.
+   * On a long course that is the next stop on the way, not the far end.
+   */
   private drawCourse(state: GameState, camX: number, camY: number): void {
-    if (!state.target) return;
-    const g = this.g, p = port(state.target);
+    const stop = nextStop(state);
+    if (!stop) return;
+    const g = this.g, p = port(state, stop);
     const tx = p.x - camX, ty = p.y - camY;
     if (tx > 0 && ty > 0 && tx < VIEW_W && ty < VIEW_H) {
-      const reach = this.stations[p.id].extent + 6;
+      const reach = this.station(p).extent + 6;
       g.fillStyle = '#eab668';
       for (const [ax, ay] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
         const cx = tx + ax * reach, cy = ty + ay * reach;

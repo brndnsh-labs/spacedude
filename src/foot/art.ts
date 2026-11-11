@@ -3,6 +3,8 @@
  * Tiles are drawn with small procedures; people are ASCII grids with palette maps.
  * First-pass art in the dusty-pixel style, meant to be refined later.
  */
+import { hueFor, shiftHex } from '../flight/pixels';
+import type { PortType } from '../sim/types';
 import { TILE } from './world';
 
 type G = CanvasRenderingContext2D;
@@ -38,11 +40,19 @@ export const SHIP_THEME: Theme = {
 };
 
 export const STATION_THEMES = {
-  kestrel: { wallTop: '#262a38', wallFace: '#5f6a7a', wallHi: '#7b8797', wallBase: '#3a4250', trim: '#eab668', floorA: '#9c8672', floorB: '#8f7a68', grout: '#7d6a5a' },
-  marrow: { wallTop: '#252c28', wallFace: '#5c6b58', wallHi: '#788a72', wallBase: '#3a4638', trim: '#8fc47a', floorA: '#a08e6c', floorB: '#93815f', grout: '#7f6e50' },
-  hollow: { wallTop: '#2c2423', wallFace: '#6b5248', wallHi: '#876a5e', wallBase: '#45342e', trim: '#e07a5f', floorA: '#7d6e66', floorB: '#72635c', grout: '#5f524c' },
-  lantern: { wallTop: '#241f33', wallFace: '#4f4668', wallHi: '#6a6086', wallBase: '#332c47', trim: '#c79bd1', floorA: '#75708a', floorB: '#6a657f', grout: '#57526b' },
-} satisfies Record<string, Theme>;
+  ring: { wallTop: '#262a38', wallFace: '#5f6a7a', wallHi: '#7b8797', wallBase: '#3a4250', trim: '#eab668', floorA: '#9c8672', floorB: '#8f7a68', grout: '#7d6a5a' },
+  farm: { wallTop: '#252c28', wallFace: '#5c6b58', wallHi: '#788a72', wallBase: '#3a4638', trim: '#8fc47a', floorA: '#a08e6c', floorB: '#93815f', grout: '#7f6e50' },
+  mine: { wallTop: '#2c2423', wallFace: '#6b5248', wallHi: '#876a5e', wallBase: '#45342e', trim: '#e07a5f', floorA: '#7d6e66', floorB: '#72635c', grout: '#5f524c' },
+  relay: { wallTop: '#241f33', wallFace: '#4f4668', wallHi: '#6a6086', wallBase: '#332c47', trim: '#c79bd1', floorA: '#75708a', floorB: '#6a657f', grout: '#57526b' },
+} satisfies Record<PortType, Theme>;
+
+const THEME_HUES = [-48, 34, -26, 58, -62, 22];
+
+/** A station's colours: its type's palette, turned to the port's own hue (the core ports are shown as drawn). */
+export function stationTheme(type: PortType, look: number): Theme {
+  const base: Theme = STATION_THEMES[type], deg = hueFor(look, THEME_HUES);
+  return Object.fromEntries(Object.entries(base).map(([k, v]) => [k, shiftHex(v as string, deg)])) as unknown as Theme;
+}
 
 /* ---------- floors ---------- */
 
@@ -260,6 +270,16 @@ export const OBJECTS: Record<string, (g: G, ox: number, oy: number) => void> = {
     px(g, '#c3c6d4', ox + 5, oy + 4, 3, 1);
     px(g, '#c3c6d4', ox + 12, oy + 5, 1, 5); // wrench
     px(g, '#c3c6d4', ox + 11, oy + 4, 3, 2);
+  },
+  // a counter with its shutter down: no shipyard at this port
+  Y(g, ox, oy) {
+    OBJECTS['='](g, ox, oy);
+    px(g, OL, ox + 1, oy - 6, 14, 10);
+    for (let y = -5; y < 3; y += 2) {
+      px(g, '#8a8fa3', ox + 2, oy + y, 12, 1);
+      px(g, '#555a72', ox + 2, oy + y + 1, 12, 1);
+    }
+    px(g, '#e07a5f', ox + 7, oy + 5, 2, 2); // padlock
   },
   // round bar table with stools
   o(g, ox, oy) {

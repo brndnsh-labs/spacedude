@@ -1,4 +1,5 @@
 import { fuelMax } from '../sim/game';
+import { nextStop } from '../sim/nav';
 import type { GameState } from '../sim/types';
 import { port } from '../sim/world';
 
@@ -32,8 +33,10 @@ export class Hud {
     const lit = Math.ceil((s.fuel / fuelMax(state)) * PIPS);
     let course = 'No course set';
     if (state.target) {
-      const p = port(state.target);
-      course = `&gt; ${esc(p.name)} - ${(Math.hypot(p.x - s.x, p.y - s.y) / 1000).toFixed(1)} Mm`;
+      // On a long course the range shown is to the next stop, which is where the chevron points.
+      const p = port(state, state.target), stop = port(state, nextStop(state) ?? state.target);
+      const via = stop.id === p.id ? '' : `<br>via ${esc(stop.name)}`;
+      course = `&gt; ${esc(p.name)}${via} - ${(Math.hypot(stop.x - s.x, stop.y - s.y) / 1000).toFixed(1)} Mm`;
     }
     const pips = Array.from({ length: PIPS }, (_, i) => `<i class="${i < lit ? '' : 'off'}"></i>`).join('');
     const keys = info.mode === 'helm'
