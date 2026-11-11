@@ -12,7 +12,10 @@ body { display: grid; place-items: center; }
 .h-tl { left: 2.5cqw; top: 2.5cqw; }
 .h-tr { right: 2.5cqw; top: 2.5cqw; }
 .h-br { right: 2.5cqw; bottom: 2.5cqw; }
-.h-prompt { left: 50%; top: 66%; transform: translateX(-50%); border-color: #7fd1c7; }
+.h-prompt { left: 50%; transform: translateX(-50%); border-color: #7fd1c7; flex-direction: column; align-items: flex-start; gap: .7cqw; }
+.h-prompt.mid { top: 66%; }
+.h-label { position: absolute; transform: translateX(-50%); background: #1a1423e6; border: .4cqw solid #7fd1c7; padding: .5cqw 1.2cqw; font-size: 2.7cqw; white-space: nowrap; }
+.h-prompt.notice { top: 13cqw; }
 .h-hint { position: absolute; left: 2.5cqw; bottom: 2.5cqw; font-size: 2.5cqw; line-height: 1.25; color: #a89a8f; text-shadow: .3cqw .3cqw 0 #000; }
 .h-hint b { color: #7fd1c7; font-weight: 400; }
 .pips { display: flex; gap: .6cqw; }

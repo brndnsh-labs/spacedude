@@ -1,25 +1,26 @@
 import {
-  UPGRADES, acceptJob, buyFuel, buyUpgrade, cargoMax, fuelFor, fuelMax, holdTons, upgradeCost,
+  TUNING, UPGRADES, acceptJob, buyFuel, buyUpgrade, cargoMax, fuelFor, fuelMax, fuelQuote, holdTons, upgradeCost,
 } from '../sim/game';
 import type { GameState, Result } from '../sim/types';
 import { PORTS, port } from '../sim/world';
 
-export type Tab = 'port' | 'jobs' | 'hold' | 'yard' | 'nav';
+export type Tab = 'log' | 'port' | 'jobs' | 'hold' | 'yard' | 'nav';
 
-const TABS: readonly { id: Tab; label: string; needsDock: boolean; action: string }[] = [
-  { id: 'port', label: 'Port', needsDock: true, action: 'Buy' },
-  { id: 'jobs', label: 'Jobs', needsDock: true, action: 'Accept' },
-  { id: 'hold', label: 'Hold', needsDock: false, action: 'Set course' },
-  { id: 'yard', label: 'Yard', needsDock: true, action: 'Fit' },
-  { id: 'nav', label: 'Nav', needsDock: false, action: 'Set course' },
-];
+const TABS: Record<Tab, { label: string; action: string }> = {
+  log: { label: 'Log', action: '' },
+  port: { label: 'Fuel', action: 'Buy' },
+  jobs: { label: 'Jobs', action: 'Accept' },
+  hold: { label: 'Hold', action: 'Set course' },
+  yard: { label: 'Yard', action: 'Fit' },
+  nav: { label: 'Nav', action: 'Set course' },
+};
 
 export interface ConsoleHost {
   state(): GameState;
-  launch(): Result;
-  resume(): void;
   /** Called after anything that changed the game state. */
   changed(): void;
+  /** Called when the player leaves the screen. */
+  closed(): void;
 }
 
 const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
@@ -27,10 +28,14 @@ const num = (n: number) => Math.round(n).toLocaleString('en-US');
 const mm = (d: number) => `${(d / 1000).toFixed(1)} Mm`;
 const signed = (n: number) => `${n > 0 ? '+' : ''}${num(n)}`;
 
-/** The ship's computer: an amber terminal for jobs, cargo, upgrades and navigation. */
+/**
+ * An amber terminal screen. Which tabs it offers depends on where the player
+ * opened it: the ship's computer, or one of a station's counters.
+ */
 export class Console {
-  tab: Tab = 'port';
-  private sel: Record<Tab, number> = { port: 0, jobs: 0, hold: 0, yard: 0, nav: 0 };
+  tab: Tab = 'nav';
+  private tabs: Tab[] = ['nav'];
+  private sel: Record<Tab, number> = { log: 0, port: 0, jobs: 0, hold: 0, yard: 0, nav: 0 };
   private msg = '';
 
   constructor(private readonly el: HTMLElement, private readonly host: ConsoleHost) {
@@ -41,26 +46,30 @@ export class Console {
     return !this.el.hidden;
   }
 
-  open(tab?: Tab, msg = ''): void {
-    const docked = !!this.host.state().docked;
-    this.tab = tab ?? (docked ? 'port' : 'nav');
-    if (!this.available(this.tab)) this.tab = 'nav';
+  /** Show the given tabs, starting on the first. */
+  open(tabs: Tab[], msg = ''): void {
+    this.tabs = tabs;
+    this.tab = tabs[0];
     this.msg = msg;
     this.el.hidden = false;
     this.render();
   }
 
   close(): void {
+    if (!this.isOpen) return;
     this.el.hidden = true;
+    this.host.closed();
   }
 
-  private available(tab: Tab): boolean {
-    return !!this.host.state().docked || !TABS.find(t => t.id === tab)!.needsDock;
+  /** Redraw with current numbers, for when the ship is flying behind the screen. */
+  refresh(): void {
+    if (this.isOpen) this.render();
   }
 
   private rowCount(): number {
     const s = this.host.state();
     switch (this.tab) {
+      case 'log': return 0;
       case 'port': return 2;
       case 'jobs': return s.docked ? s.boards[s.docked].length : 0;
       case 'hold': return s.hold.length;
@@ -70,12 +79,8 @@ export class Console {
   }
 
   private setTab(tab: Tab): void {
-    if (!this.available(tab)) {
-      this.msg = 'No dock link. Dock to use that.';
-    } else {
-      this.tab = tab;
-      this.msg = '';
-    }
+    this.tab = tab;
+    this.msg = '';
     this.render();
   }
 
@@ -90,6 +95,8 @@ export class Console {
     const s = this.host.state(), i = this.sel[this.tab];
     let r: Result | null = null;
     switch (this.tab) {
+      case 'log':
+        break;
       case 'port':
         r = buyFuel(s, i === 0 ? 'fill' : 10);
         break;
@@ -124,29 +131,20 @@ export class Console {
     this.render();
   }
 
-  private launch(): void {
-    const r = this.host.launch();
-    if (!r.ok) {
-      this.msg = r.msg;
-      this.render();
-    }
-  }
-
   /** Handle a key press. Returns true if the console used it. */
   key(e: KeyboardEvent): boolean {
-    const docked = !!this.host.state().docked;
     const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-    if (k >= '1' && k <= '5') this.setTab(TABS[+k - 1].id);
-    else if (k === 'ArrowUp' || k === 'w') this.move(-1);
+    if (k >= '1' && k <= '9') {
+      const tab = this.tabs[+k - 1];
+      if (tab) this.setTab(tab);
+    } else if (k === 'ArrowUp' || k === 'w') this.move(-1);
     else if (k === 'ArrowDown' || k === 's') this.move(1);
     else if (k === 'ArrowLeft' || k === 'ArrowRight' || k === 'a' || k === 'd') {
-      const open = TABS.filter(t => this.available(t.id));
       const step = k === 'ArrowLeft' || k === 'a' ? -1 : 1;
-      this.setTab(open[(open.findIndex(t => t.id === this.tab) + step + open.length) % open.length].id);
+      this.setTab(this.tabs[(this.tabs.indexOf(this.tab) + step + this.tabs.length) % this.tabs.length]);
     } else if (k === 'Enter' || k === ' ') this.activate();
-    else if (k === 'l' && docked) this.launch();
-    else if ((k === 'Tab' || k === 'Escape') && !docked) this.host.resume();
-    else if (k !== 'Tab') return false;
+    else if (k === 'Escape' || k === 'Tab') this.close();
+    else return false;
     return true;
   }
 
@@ -159,23 +157,23 @@ export class Console {
       this.msg = '';
       this.render();
     } else if (t.dataset.act === 'go') this.activate();
-    else if (t.dataset.act === 'launch') this.launch();
-    else if (t.dataset.act === 'resume') this.host.resume();
+    else if (t.dataset.act === 'close') this.close();
   }
 
   render(): void {
     const s = this.host.state();
     const n = this.rowCount();
     this.sel[this.tab] = Math.max(0, Math.min(this.sel[this.tab], n - 1));
-    const tabDef = TABS.find(t => t.id === this.tab)!;
 
-    const tabs = TABS.map((t, i) =>
-      `<button data-tab="${t.id}" class="${t.id === this.tab ? 'on' : ''}${this.available(t.id) ? '' : ' off'}">${i + 1} ${t.label}</button>`).join('');
-    const body = { port: this.portTab, jobs: this.jobsTab, hold: this.holdTab, yard: this.yardTab, nav: this.navTab }[this.tab].call(this, s);
+    const tabs = this.tabs.map((id, i) =>
+      `<button data-tab="${id}" class="${id === this.tab ? 'on' : ''}">${i + 1} ${TABS[id].label}</button>`).join('');
+    const body = {
+      log: this.logTab, port: this.portTab, jobs: this.jobsTab, hold: this.holdTab, yard: this.yardTab, nav: this.navTab,
+    }[this.tab].call(this, s);
 
     this.el.innerHTML = `
       <div class="c-head">
-        <span>${esc(s.docked ? port(s.docked).name : 'In flight')}</span>
+        <span>${esc(s.docked ? port(s.docked).name : 'Under way')}</span>
         <span>Day ${s.day}</span>
         <span class="${s.credits < 0 ? 'neg' : ''}">Cr ${num(s.credits)}</span>
         <span>Fuel ${Math.round(s.ship.fuel)}/${fuelMax(s)}</span>
@@ -186,8 +184,8 @@ export class Console {
       <div class="c-foot">
         <span class="c-msg">&gt; ${esc(this.msg)}<span class="cursor">_</span></span>
         <span class="c-actions">
-          ${n ? `<button data-act="go">[Enter] ${tabDef.action}</button>` : ''}
-          ${s.docked ? '<button data-act="launch">[L] Launch</button>' : '<button data-act="resume">[Tab] Resume</button>'}
+          ${n ? `<button data-act="go">[Enter] ${TABS[this.tab].action}</button>` : ''}
+          <button data-act="close">[Esc] Leave</button>
         </span>
       </div>`;
   }
@@ -196,18 +194,30 @@ export class Console {
     return `<div class="row ${cls}${this.sel[this.tab] === i ? ' sel' : ''}" data-row="${i}">${cells.map(c => `<span>${c}</span>`).join('')}</div>`;
   }
 
-  private portTab(s: GameState): string {
-    const p = port(s.docked!);
-    const space = fuelMax(s) - s.ship.fuel;
+  private logTab(s: GameState): string {
     const report = s.report.map(l =>
       `<div class="line"><span>${esc(l.text)}</span>${l.amount === undefined ? '' : `<span class="${l.amount < 0 ? 'neg' : ''}">${signed(l.amount)}</span>`}</div>`).join('');
     return `
-      <div class="dim">${esc(p.blurb)}</div>
-      <div class="sect">Arrival report</div>
+      <div class="sect">Last port call</div>
       ${report || '<div class="dim">Nothing to report.</div>'}
+      <div class="sect">To date</div>
+      <div class="dim">${s.stats.delivered} jobs delivered, ${num(s.stats.earned)} cr earned.</div>`;
+  }
+
+  private portTab(s: GameState): string {
+    const p = port(s.docked!);
+    // Quote what the pump will really give: a maxed tab buys less, and the harbormaster may front some.
+    const quote = (label: string, units: number | 'fill') => {
+      const q = fuelQuote(s, units);
+      return [label, `${Math.round(q.paid + q.fronted)} units`, `${num(q.cost)} cr`];
+    };
+    return `
+      <div class="dim">${esc(p.blurb)}</div>
       <div class="sect">Fuel dock - ${p.fuelPrice.toFixed(1)} cr per unit</div>
-      ${this.row(0, 'r-port', ['Fill the tank', `${Math.round(space)} units`, `${num(Math.ceil(space * p.fuelPrice))} cr`])}
-      ${this.row(1, 'r-port', ['Take on 10', `${Math.round(Math.min(10, space))} units`, `${num(Math.ceil(Math.min(10, space) * p.fuelPrice))} cr`])}`;
+      ${this.row(0, 'r-port', quote('Fill the tank', 'fill'))}
+      ${this.row(1, 'r-port', quote('Take on 10', 10))}
+      <div class="sect">Dock clerk says</div>
+      <div class="dim">${s.credits < 0 ? "It's on your tab. The tab has limits." : 'Berth fee is already on your account.'}</div>`;
   }
 
   private jobsTab(s: GameState): string {
@@ -223,11 +233,11 @@ export class Console {
       ${rows}
       <div class="sect">From ${esc(j.client)}</div>
       <div>${esc(j.note)}</div>
-      <div class="dim">${j.tons > free ? `Won't fit: needs ${j.tons} t, ${free} t free.` : `Needs ${j.tons} t of your ${free} t free.`} Late delivery pays 60%.</div>`;
+      <div class="dim">${j.tons > free ? `Won't fit: needs ${j.tons} t, ${free} t free.` : `Needs ${j.tons} t of your ${free} t free.`} Late delivery pays ${Math.round(TUNING.lateFactor * 100)}%.</div>`;
   }
 
   private holdTab(s: GameState): string {
-    if (!s.hold.length) return `<div class="dim">The hold is empty. ${s.docked ? 'Take work from the jobs board.' : 'Dock somewhere and find work.'}</div>`;
+    if (!s.hold.length) return `<div class="dim">The hold is empty. Ask about work at a station.</div>`;
     const rows = s.hold.map((j, i) => this.row(i, 'r-hold', [
       esc(j.cargo), esc(port(j.to).name), `${j.tons} t`, s.day > j.due ? 'Late' : `Day ${j.due}`, `${num(j.pay)} cr`,
     ])).join('');
@@ -235,7 +245,7 @@ export class Console {
       <div class="row r-hold dim"><span>Cargo</span><span>Deliver to</span><span>Load</span><span>Due</span><span>Pays</span></div>
       ${rows}
       <div class="sect">Manifest</div>
-      <div class="dim">${holdTons(s)} of ${cargoMax(s)} t used. ${s.stats.delivered} jobs delivered, ${num(s.stats.earned)} cr earned to date.</div>`;
+      <div class="dim">${holdTons(s)} of ${cargoMax(s)} t used.</div>`;
   }
 
   private yardTab(s: GameState): string {
@@ -247,7 +257,7 @@ export class Console {
       <div class="row r-yard dim"><span>Fitting</span><span>Level</span><span>Each level</span><span>Cost</span></div>
       ${rows}
       <div class="sect">Yard boss says</div>
-      <div class="dim">${s.credits < 0 ? "Settle your tab before you talk to me about fittings." : 'Cash up front. No tabs, no trades.'}</div>`;
+      <div class="dim">${s.credits < 0 ? 'Settle your tab before you talk to me about fittings.' : 'Cash up front. No tabs, no trades.'}</div>`;
   }
 
   private navTab(s: GameState): string {
@@ -267,7 +277,7 @@ export class Console {
       <div class="row r-nav dim"><span>&nbsp; Port</span><span>Range</span><span>Fuel</span><span>Cargo</span></div>
       ${rows}
       <div class="sect">Course</div>
-      <div class="dim">${s.target ? `Laid in for ${esc(port(s.target).name)}.` : 'None laid in.'} In flight, Q engages the autopilot.</div>
+      <div class="dim">${s.target ? `Laid in for ${esc(port(s.target).name)}.` : 'None laid in.'} At the helm, Q engages the autopilot.</div>
     </div></div>`;
   }
 

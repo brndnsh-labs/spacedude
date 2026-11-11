@@ -112,20 +112,27 @@ export function acceptJob(state: GameState, jobId: number): Result {
   return ok(`Loaded ${job.cargo.toLowerCase()} for ${port(job.to).name}.`);
 }
 
-export function buyFuel(state: GameState, units: number | 'fill'): Result {
-  if (!state.docked) return fail('No dock link.');
+/** What asking the pump for this much would really get you: fuel paid for, fuel fronted, and the bill. */
+export function fuelQuote(state: GameState, units: number | 'fill'): { paid: number; fronted: number; cost: number } {
+  if (!state.docked) return { paid: 0, fronted: 0, cost: 0 };
   const price = port(state.docked).fuelPrice;
   const space = fuelMax(state) - state.ship.fuel;
-  if (space < 0.5) return fail('Tank is full.');
-  const want = Math.min(units === 'fill' ? space : units, space);
-  if (!(want > 0)) return fail('Nothing to pump.');
+  const want = Math.max(0, Math.min(units === 'fill' ? space : units, space));
   const tab = Math.max(0, state.credits - TUNING.creditFloor);
   const paid = Math.min(want, Math.floor(tab / price));
   // Nobody gets left on the dock. If the tab will not stretch to a tank that reaches the next port,
   // the harbormaster fronts the difference.
   const fronted = paid < want ? Math.min(space - paid, Math.max(0, limpFuel(state, state.docked) - state.ship.fuel - paid)) : 0;
+  return { paid, fronted, cost: Math.min(Math.ceil(paid * price), tab) };
+}
+
+export function buyFuel(state: GameState, units: number | 'fill'): Result {
+  if (!state.docked) return fail('No dock link.');
+  const space = fuelMax(state) - state.ship.fuel;
+  if (space < 0.5) return fail('Tank is full.');
+  if (!(Math.min(units === 'fill' ? space : units, space) > 0)) return fail('Nothing to pump.');
+  const { paid, fronted, cost } = fuelQuote(state, units);
   if (paid + fronted <= 0) return fail("The harbormaster won't extend your tab any further.");
-  const cost = Math.min(Math.ceil(paid * price), tab);
   state.credits -= cost;
   state.ship.fuel += paid + fronted;
   if (fronted > 0) {

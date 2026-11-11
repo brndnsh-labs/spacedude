@@ -4,7 +4,21 @@ import { port } from '../sim/world';
 
 const PIPS = 8;
 
-/** The in-flight overlay: credits, fuel, course and prompts, in the pixel style. */
+export interface HudInfo {
+  /** At the helm flying the ship, or walking around. */
+  mode: 'helm' | 'foot';
+  autopilot: boolean;
+  /** Where the player is, shown above the key hints. */
+  place: string;
+  /** One line is an action prompt; several are a notice (such as an arrival report). */
+  prompt: string[];
+  /** On foot: where the walker is in the 320x180 frame, so the prompt can sit under them. */
+  anchor?: { x: number; y: number };
+}
+
+const esc = (s: string) => s.replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+
+/** The pixel-style overlay: credits, fuel, course, where you are, and prompts. */
 export class Hud {
   private last = '';
   constructor(private readonly el: HTMLElement) {}
@@ -13,21 +27,32 @@ export class Hud {
     this.el.hidden = !visible;
   }
 
-  update(state: GameState, opts: { autopilot: boolean; prompt: string }): void {
+  update(state: GameState, info: HudInfo): void {
     const s = state.ship;
     const lit = Math.ceil((s.fuel / fuelMax(state)) * PIPS);
     let course = 'No course set';
     if (state.target) {
       const p = port(state.target);
-      course = `&gt; ${p.name} - ${(Math.hypot(p.x - s.x, p.y - s.y) / 1000).toFixed(1)} Mm`;
+      course = `&gt; ${esc(p.name)} - ${(Math.hypot(p.x - s.x, p.y - s.y) / 1000).toFixed(1)} Mm`;
     }
     const pips = Array.from({ length: PIPS }, (_, i) => `<i class="${i < lit ? '' : 'off'}"></i>`).join('');
+    const keys = info.mode === 'helm'
+      ? 'Arrows / WASD fly<br>Q autopilot - E dock<br>Tab computer - X stand up'
+      : 'Arrows / WASD walk<br>E use';
+    let prompt = '';
+    if (info.prompt.length === 1 && info.anchor) {
+      // A small label under the walker keeps your eyes on the character. 3.2 view pixels = 1cqw.
+      const x = Math.max(52, Math.min(268, info.anchor.x)) / 3.2, y = (info.anchor.y + 7) / 3.2;
+      prompt = `<div class="h-label" style="left:${x.toFixed(1)}cqw;top:${y.toFixed(1)}cqw">${esc(info.prompt[0])}</div>`;
+    } else if (info.prompt.length) {
+      prompt = `<div class="h-box h-prompt ${info.prompt.length > 1 ? 'notice' : 'mid'}">${info.prompt.map(l => `<div>${esc(l)}</div>`).join('')}</div>`;
+    }
     const html = `
       <div class="h-box h-tl">Cr ${Math.round(state.credits).toLocaleString('en-US')} <span class="pips${lit <= 2 ? ' low' : ''}">${pips}</span></div>
       <div class="h-box h-tr">Day ${state.day}</div>
       <div class="h-box h-br">${course}</div>
-      <div class="h-hint">${opts.autopilot ? '<b>Autopilot on</b><br>' : ''}Arrows / WASD fly<br>Q autopilot - E dock<br>Tab console</div>
-      ${opts.prompt ? `<div class="h-box h-prompt">${opts.prompt}</div>` : ''}`;
+      <div class="h-hint"><b>${esc(info.place)}${info.autopilot ? ' - autopilot on' : ''}</b><br>${keys}</div>
+      ${prompt}`;
     if (html !== this.last) {
       this.last = html;
       this.el.innerHTML = html;

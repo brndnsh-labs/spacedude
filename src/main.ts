@@ -2,7 +2,9 @@ import '@fontsource/pixelify-sans';
 import '@fontsource/vt323';
 import './style.css';
 import { FlightView, VIEW_H, VIEW_W } from './flight/render';
-import { atDock, autopilot, dock, dockable, launch, newGame, stepFlight } from './sim/game';
+import { FootView, walkerOnScreen } from './foot/render';
+import { cratesFor, crossAirlock, newWalker, reach, stepWalk, type Kind } from './foot/world';
+import { atDock, autopilot, cargoMax, dock, dockable, holdTons, launch, newGame, stepFlight } from './sim/game';
 import { clearSave, loadGame, saveGame } from './sim/save';
 import type { FlightInput, GameState, PortId } from './sim/types';
 import { port } from './sim/world';
@@ -10,7 +12,9 @@ import { Console } from './ui/console';
 import { Hud } from './ui/hud';
 
 const stage = document.getElementById('stage') as HTMLDivElement;
-const view = new FlightView(document.getElementById('view') as HTMLCanvasElement);
+const canvas = document.getElementById('view') as HTMLCanvasElement;
+const flightView = new FlightView(canvas);
+const footView = new FootView(canvas);
 const hud = new Hud(document.getElementById('hud') as HTMLDivElement);
 
 // `?new` in the URL throws away the save and starts over.
@@ -20,6 +24,9 @@ if (new URLSearchParams(location.search).has('new')) {
 }
 let state: GameState = loadGame() ?? newGame((Date.now() & 0x7fffffff) | 1);
 
+/** You are either on your feet (aboard or in a station) or sat at the helm flying. */
+let mode: 'foot' | 'helm' = 'foot';
+const walker = newWalker();
 let auto = false;
 /** The port we just left; its dock prompt stays hidden until we have cleared it. */
 let leaving: PortId | null = null;
@@ -27,28 +34,105 @@ const keys = new Set<string>();
 
 const con = new Console(document.getElementById('console') as HTMLDivElement, {
   state: () => state,
-  launch() {
-    const from = state.docked;
-    const r = launch(state);
-    if (r.ok) {
-      leaving = from;
-      auto = false;
-      con.close();
-      saveGame(state);
-    }
-    return r;
-  },
-  resume: () => con.close(),
   changed: () => saveGame(state),
+  closed: () => keys.clear(),
 });
 
-function arrive(id: PortId, msg = ''): void {
-  dock(state, id);
+/* ---------- notices ---------- */
+
+let notice: string[] = [];
+let noticeUntil = 0;
+function flash(lines: string | string[], seconds = 2.5): void {
+  notice = typeof lines === 'string' ? [lines] : lines;
+  noticeUntil = performance.now() + seconds * 1000;
+}
+
+const signed = (n: number) => `${n > 0 ? '+' : ''}${Math.round(n).toLocaleString('en-US')}`;
+
+/* ---------- docking and launching ---------- */
+
+/** Housekeeping once the clamps are on, however we got here. */
+function berthed(): void {
+  const id = state.docked!;
   auto = false;
+  mode = 'foot'; // you get up from the helm once the clamps are on
   keys.clear();
   saveGame(state);
-  con.open('port', msg);
+  flash([
+    `Docked - ${port(id).name}`,
+    ...state.report.map(l => (l.amount === undefined ? l.text : `${l.text} ${signed(l.amount)}`)),
+  ], 8);
 }
+
+function arrive(id: PortId): void {
+  dock(state, id);
+  berthed();
+}
+
+function takeHelm(): void {
+  if (state.docked) {
+    const from = state.docked;
+    const r = launch(state);
+    if (!r.ok) return flash(r.msg);
+    leaving = from;
+    auto = false;
+    saveGame(state);
+    flash(r.msg);
+  }
+  mode = 'helm';
+  keys.clear();
+}
+
+/* ---------- using things on foot ---------- */
+
+const pick = (lines: string[]) => lines[Math.floor(Math.random() * lines.length)];
+
+const FLAVOUR: Partial<Record<Kind, string[]>> = {
+  bunk: ['Not tired enough. Yet.', 'The blanket has seen three systems and one wash.'],
+  galley: ["Coffee. Yesterday's, but coffee.", 'The mug says WORLD\'S OKAYEST CAPTAIN.'],
+  engine: ["She's holding together.", 'It hums. Mostly in tune.'],
+  plant: ['Still alive. Somehow.', 'You water it. It judges you less.'],
+  shelf: ['Manuals, a deck of cards, somebody\'s harmonica.', 'A jar of bolts labelled SPARE. Spare what, nobody knows.'],
+};
+
+function promptFor(kind: Kind): string {
+  switch (kind) {
+    case 'seat': return state.docked ? '[E] Launch' : '[E] Take the helm';
+    case 'terminal': return '[E] Ship computer';
+    case 'airlock':
+      if (walker.area === 'station') return '[E] Board your ship';
+      return state.docked ? `[E] Airlock - ${port(state.docked).name}` : 'Airlock sealed';
+    case 'jobs': return '[E] Ask about work';
+    case 'fuel': return '[E] Dock office';
+    case 'yard': return '[E] Shipyard counter';
+    case 'bunk': return '[E] Bunk';
+    case 'galley': return '[E] Coffee';
+    case 'engine': return '[E] Check the engine';
+    case 'plant': return '[E] Plant';
+    case 'shelf': return '[E] Shelf';
+  }
+}
+
+function use(): void {
+  const target = reach(walker);
+  if (!target) return;
+  switch (target.kind) {
+    case 'seat': return takeHelm();
+    case 'terminal': return con.open(['nav', 'hold', 'log']);
+    case 'airlock':
+      if (walker.area === 'ship' && !state.docked) return flash('Sealed. Nothing out there but weather.');
+      return crossAirlock(walker);
+    case 'jobs': return con.open(['jobs', 'hold']);
+    case 'fuel': return con.open(['port']);
+    case 'yard': return con.open(['yard']);
+    default: {
+      const lines = FLAVOUR[target.kind];
+      if (lines) flash(pick(lines), 3.5);
+    }
+  }
+}
+
+/* ---------- input ---------- */
 
 function fit(): void {
   const k = Math.min(innerWidth / VIEW_W, innerHeight / VIEW_H);
@@ -59,13 +143,7 @@ function fit(): void {
 addEventListener('resize', fit);
 fit();
 
-const FLIGHT_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd']);
-let notice = '';
-let noticeUntil = 0;
-function flash(text: string): void {
-  notice = text;
-  noticeUntil = performance.now() + 2500;
-}
+const MOVE_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd']);
 
 addEventListener('keydown', e => {
   if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -74,15 +152,21 @@ addEventListener('keydown', e => {
     return;
   }
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
-  if (FLIGHT_KEYS.has(k)) {
+  if (MOVE_KEYS.has(k)) {
     keys.add(k);
-    auto = false;
-  } else if (k === 'Tab' || k === 'Escape') {
+    if (mode === 'helm') auto = false;
+  } else if (mode === 'foot') {
+    if (k === 'e' || k === 'Enter' || k === ' ') use();
+    else return;
+  } else if (k === 'Tab') {
     keys.clear();
-    con.open();
+    con.open(['nav', 'hold', 'log']);
+  } else if (k === 'x' || k === 'Escape') {
+    mode = 'foot';
+    keys.clear();
   } else if (k === 'q') {
     if (state.target) auto = !auto;
-    else flash('No course set - Tab opens the console');
+    else flash('No course set - Tab opens the ship computer');
   } else if (k === 'e') {
     const id = dockable(state);
     if (id) arrive(id);
@@ -93,50 +177,69 @@ addEventListener('keydown', e => {
 addEventListener('keyup', e => keys.delete(e.key.length === 1 ? e.key.toLowerCase() : e.key));
 addEventListener('blur', () => keys.clear());
 
-function manualInput(): FlightInput {
-  const left = keys.has('ArrowLeft') || keys.has('a'), right = keys.has('ArrowRight') || keys.has('d');
-  return {
-    turn: (right ? 1 : 0) - (left ? 1 : 0),
-    thrust: keys.has('ArrowUp') || keys.has('w'),
-    brake: keys.has('ArrowDown') || keys.has('s'),
-  };
-}
+const held = (...names: string[]) => names.some(n => keys.has(n));
+const axis = () => ({
+  dx: (held('ArrowRight', 'd') ? 1 : 0) - (held('ArrowLeft', 'a') ? 1 : 0),
+  dy: (held('ArrowDown', 's') ? 1 : 0) - (held('ArrowUp', 'w') ? 1 : 0),
+});
+const IDLE: FlightInput = { turn: 0, thrust: false, brake: false };
+
+/* ---------- main loop ---------- */
 
 let last = performance.now();
+let sinceRefresh = 0;
 function frame(now: number): void {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
-  const flying = !state.docked && !con.isOpen;
   let thrusting = false;
 
-  if (flying) {
-    const input = auto && state.target ? autopilot(state, state.target) : manualInput();
+  // The ship keeps flying whether you are at the helm, at a terminal, or making coffee.
+  if (!state.docked) {
+    const atControls = mode === 'helm' && !con.isOpen;
+    const a = axis();
+    const input = auto && state.target ? autopilot(state, state.target)
+      : atControls ? { turn: a.dx, thrust: a.dy < 0, brake: a.dy > 0 }
+      : IDLE;
     thrusting = input.thrust && state.ship.fuel > 0;
-    if (stepFlight(state, input, dt) === 'towed') {
-      arrive(state.docked!, 'Next time, watch the gauge.');
-    } else if (auto && state.target && atDock(state, state.target)) {
-      arrive(state.target);
+    if (stepFlight(state, input, dt) === 'towed') berthed(); // the tow has already docked us
+    else if (auto && state.target && atDock(state, state.target)) arrive(state.target);
+    sinceRefresh += dt;
+    if (sinceRefresh > 1) {
+      sinceRefresh = 0;
+      con.refresh();
     }
   }
 
-  if (!state.docked) {
+  const noticeLines = now < noticeUntil ? notice : [];
+  if (mode === 'foot') {
+    const env = { crates: cratesFor(holdTons(state), cargoMax(state)) };
+    if (!con.isOpen) stepWalk(walker, axis(), dt, env);
+    const target = reach(walker);
+    footView.draw(walker, state, { dt, time: now / 1000, thrusting, mark: target });
+    const place = walker.area === 'station' ? port(state.docked!).name
+      : state.docked ? `Aboard, docked at ${port(state.docked).name}` : 'Aboard, under way';
+    hud.update(state, {
+      mode, autopilot: auto, place,
+      prompt: noticeLines.length ? noticeLines : target ? [promptFor(target.kind)] : [],
+      anchor: walkerOnScreen(walker),
+    });
+  } else {
     const near = dockable(state);
     if (near !== leaving) leaving = null;
-    let prompt = '';
-    if (now < noticeUntil) prompt = notice;
-    else if (near && !leaving) prompt = `[E] Dock - ${port(near).name}`;
-    else if (state.ship.fuel <= 0) prompt = 'Tank dry - drifting';
-    view.draw(state, thrusting, flying ? dt : 0, now / 1000);
-    hud.update(state, { autopilot: auto, prompt });
+    let prompt = noticeLines;
+    if (!prompt.length) {
+      if (near && !leaving) prompt = [`[E] Dock - ${port(near).name}`];
+      else if (state.ship.fuel <= 0) prompt = ['Tank dry - drifting'];
+    }
+    flightView.draw(state, thrusting, dt, now / 1000);
+    hud.update(state, { mode, autopilot: auto, place: 'At the helm', prompt });
   }
-  hud.show(!state.docked && !con.isOpen);
+  hud.show(!con.isOpen);
   requestAnimationFrame(frame);
 }
-
-if (state.docked) con.open('port');
 requestAnimationFrame(frame);
 
 if (import.meta.env.DEV) {
-  // Handy in the browser console while tuning: `spacedude.state`.
-  (window as unknown as Record<string, unknown>).spacedude = { get state() { return state; } };
+  // Handy in the browser console while tuning: `spacedude.state`, `spacedude.walker`.
+  (window as unknown as Record<string, unknown>).spacedude = { get state() { return state; }, walker };
 }
