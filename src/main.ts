@@ -149,14 +149,14 @@ function use(): void {
   if (!target) return;
   switch (target.kind) {
     case 'seat': return takeHelm();
-    case 'terminal': return con.open(['nav', 'hold', 'log']);
+    case 'terminal': return con.open(['nav', 'hold', 'log'], 'Ship computer');
     case 'airlock':
       if (walker.area === 'ship' && !state.docked) return flash('Sealed. Nothing out there but weather.');
       return crossAirlock(walker);
-    case 'jobs': return con.open(['jobs', 'hold']);
-    case 'fuel': return con.open(['port']);
+    case 'jobs': return con.open(['jobs', 'hold'], 'Work broker');
+    case 'fuel': return con.open(['port'], 'Dock office');
     case 'yard': {
-      if (port(state, state.docked!).yard) return con.open(['yard']);
+      if (port(state, state.docked!).yard) return con.open(['yard'], 'Shipyard');
       const here = state.docked!;
       const nearest = state.ports.filter(p => p.yard).sort((a, b) => charted(state, here, a.id).dist - charted(state, here, b.id).dist)[0];
       return flash(['No shipyard at this port', `Nearest is ${nearest.name}, in ${nearest.region}`], 4);
@@ -202,7 +202,7 @@ addEventListener('keydown', e => {
     else return;
   } else if (k === 'Tab') {
     keys.clear();
-    con.open(['nav', 'hold', 'log']);
+    con.open(['nav', 'hold', 'log'], 'Ship computer');
   } else if (k === 'x' || k === 'Escape') {
     mode = 'foot';
     keys.clear();
