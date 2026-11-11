@@ -23,7 +23,7 @@ A cozy space-trucking game in the browser: take jobs, haul cargo between ports, 
   - `bots.ts`, `harness.ts`, `balance.ts` are the balance harness. They ship with the repo but not the game.
 - `src/view.ts` - the frame: 480x270, and `ZOOM` (1.5 screen pixels per sim unit; the sim's units never changed).
 - `src/flight/` - the flight view. All art is drawn by code into canvases; generated ports reuse a type's drawing with the hue turned. One station design per file in `stations/`.
-- `src/foot/` - walking: tile maps in `world.ts` (16 map units a tile), art in `art/` (one module each for the ship, stations and people; the contract is `art/types.ts`).
+- `src/foot/` - walking: tile maps in `world.ts` (16 map units a tile), art in `art/` (`ship*.ts` is the freighter's deck, `station*.ts` the concourses with one file per port type, `people*.ts` the characters; the contract is `art/types.ts`).
 - `src/art/palette.ts` - the master colour ramps.
 - `src/crt/` - the optional CRT filter (`V` toggles it). `src/settings.ts` holds player preferences.
 - `lab.html` + `src/lab.ts` - the art lab: every sprite and room enlarged, dev server only.

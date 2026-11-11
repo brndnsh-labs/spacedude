@@ -27,7 +27,7 @@ async page => {
   const press = async (key, times = 1) => { for (let i = 0; i < times; i++) await page.keyboard.press(key); };
   const consoleText = () => game(() => {
     const el = document.getElementById('console');
-    return el.hidden ? null : el.textContent;
+    return el.hidden || el.classList.contains('closing') ? null : el.textContent;
   });
   /** Fly on autopilot until the clamps are on, up to four minutes of game time. */
   const flyUntilDocked = () => game(() => {
