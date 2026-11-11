@@ -14,7 +14,7 @@ const ROSE = ramp('#1f1230', '#3a1f4c', '#5f2f66', '#8a4a7c', '#b46f8f', '#d99aa
 const CREAM = ramp('#221634', '#40285a', '#6a4580', '#9a6c9c', '#c99cb4', '#ecc8c8', '#fdeedd');
 const M_LILAC = 0, M_DUSK = 1, M_ROSE = 2, M_CREAM = 3;
 
-const RING_WARM = ramp('#241a3a', '#3f2f5c', '#6a557f', '#9a829f', '#c9b0b8', '#eddcd0', '#fff6e6');
+const RING_WARM = ramp('#241a3a', '#3f2f5c', '#6a557f', '#9a829f', '#c4a8b4', '#e4ccc8', '#f8e8d8');
 const RING_COOL = ramp('#221a3c', '#392f60', '#5c5288', '#857cae', '#b0a8cf', '#dad4ea');
 const MOON = ramp('#221c30', '#3d3548', '#5f566a', '#8a8090', '#b8aeb4', '#e6ddd6');
 
@@ -29,16 +29,27 @@ const BELTS: readonly (readonly [number, number, number])[] = [
   [0.3, M_DUSK, 0.92], [0.46, M_LILAC, 1], [0.54, M_ROSE, 0.9], [0.7, M_LILAC, 0.9], [0.8, M_DUSK, 0.85], [2, M_DUSK, 0.74],
 ];
 
-/** How much ring there is at a radius, in globe radii: 0 is a gap, 1 is dense. */
+/**
+ * How much ring there is at a radius, in globe radii: 0 is a gap, 1 is dense. This is what the eye sees
+ * through (thin rings dither away) and what casts the shadow on the globe.
+ */
 function ringDensity(rho: number): number {
   if (rho < RING_IN || rho > RING_OUT) return 0;
-  const fine = gnoise(rho * 36, 3.1, 7.7) * 0.5 + gnoise(rho * 90, 1.7, 2.9) * 0.25;
-  if (rho < 1.5) return (0.14 + 0.2 * ((rho - RING_IN) / 0.26)) * (1 + fine * 1.4); // the thin inner ring
-  if (rho < 1.94) return clamp(0.86 + fine * 0.5 - (rho < 1.53 ? 0.3 : 0) - (Math.abs(rho - 1.72) < 0.012 ? 0.45 : 0));
-  if (rho < 2.02) return 0.03; // the wide gap
-  if (rho < 2.27) return Math.abs(rho - 2.2) < 0.012 ? 0.05 : clamp(0.6 + fine * 0.4);
-  if (rho > 2.305 && rho < 2.325) return 0.32; // a stray outer ringlet
+  if (rho < 1.5) return 0.2 + 0.25 * ((rho - RING_IN) / 0.26); // the thin inner ring
+  if (rho < 1.94) return 1;
+  if (rho < 2.02) return 0; // the wide gap
+  if (rho < 2.27) return 0.9;
+  if (rho > 2.3 && rho < 2.33) return 0.4; // a stray outer ringlet
   return 0;
+}
+
+/** How bright the ring is at a radius: broad lanes and fine ringlets, so the dense rings are never one flat slab. */
+function ringTone(rho: number): number {
+  const lanes = gnoise(rho * 11, 3.1, 7.7) * 0.5 + gnoise(rho * 31, 1.7, 2.9) * 0.3;
+  if (rho < 1.5) return 0.42 + lanes * 0.4;
+  if (rho < 1.94) return 0.74 + lanes * 0.75 - (rho < 1.56 ? (1.56 - rho) * 4 : 0) - (Math.abs(rho - 1.73) < 0.014 ? 0.25 : 0);
+  if (rho < 2.27) return 0.6 + lanes * 0.6 - (Math.abs(rho - 2.2) < 0.012 ? 0.3 : 0) - (rho > 2.24 ? 0.1 : 0);
+  return 0.4;
 }
 
 export function paintGiant(buf: PixelBuf, cx: number, cy: number): void {
@@ -57,25 +68,26 @@ export function paintGiant(buf: PixelBuf, cx: number, cy: number): void {
   const ringPixel = (x: number, y: number, dx: number, dy: number): number => {
     const u = dx * a[0] + dy * a[1], v = -dx * a[1] + dy * a[0];
     // three samples across the pixel, the way the rings are squeezed, so fine ringlets do not shimmer
-    let dens = 0, rho = 0;
+    let dens = 0, tone = 0;
     for (let i = -1; i <= 1; i++) {
-      const rr = Math.hypot(u, (v + i * 0.34) / k) / r;
-      dens += ringDensity(rr);
-      if (i === 0) rho = rr;
+      const rr = Math.hypot(u, (v + i * 0.34) / k) / r, d = ringDensity(rr);
+      dens += d;
+      tone += d * ringTone(rr);
     }
+    if (dens < 0.1) return -1;
+    tone /= dens;
     dens /= 3;
-    if (dens < 0.04) return -1;
-    const solid = dens > 0.62 || (dens > 0.34 && ((x + y) & 1) === 0) || dens * 1.5 > bay(x, y);
+    const rho = Math.hypot(u, v / k) / r;
+    const solid = dens > 0.7 || (dens > 0.36 && ((x + y) & 1) === 0) || dens * 1.3 > bay(x, y);
     if (!solid) return -1;
     const w = v / k, P: Vec = [u * a[0] + w * b[0], u * a[1] + w * b[1], w * b[2]];
     const along = dot(P, LIGHT), off = Math.sqrt(Math.max(0, dot(P, P) - along * along));
     // the globe's shadow, with a dithered edge
     const dark = along < 0 ? clamp((r - off) / 3 + 0.5) : 0;
-    const grain = gnoise(rho * 36, 3.1, 7.7);
-    const cool = rho > 2.0 || rho < 1.5;
-    let t = (cool ? 0.42 : 0.62) + dens * 0.36 + grain * 0.12;
+    const cool = rho > 1.98 || rho < 1.5;
+    let t = tone;
     if (dark > bay(x + 2, y + 1)) t = t * 0.24 + 0.04;
-    return pick(cool ? RING_COOL : RING_WARM, t, x, y, 0.5);
+    return pick(cool ? RING_COOL : RING_WARM, t, x, y, 0.45);
   };
 
   // the far half of the rings, behind the globe
@@ -111,7 +123,7 @@ export function paintGiant(buf: PixelBuf, cx: number, cy: number): void {
       let mat = BELTS[i][1], tone = BELTS[i][2];
       // streaks drawn out along each belt, and a soft darkening toward a belt's southern edge
       const streak = fbm(px * 3.4 + 7, lat * 34, pz * 3.4 + 3, 4) - 0.5;
-      tone += streak * 0.3;
+      tone += streak * 0.42;
       const prev = i ? BELTS[i - 1][0] : -1, depth = (lat - prev) / (BELTS[i][0] - prev);
       tone -= step(0.55, 1, depth) * 0.07;
       // wisps of the next belt's colour dragged across the boundary

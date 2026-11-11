@@ -35,7 +35,7 @@ export function paintMarrow(buf: PixelBuf, cx: number, cy: number): void {
   const SEA_LEVEL = 0.485;
 
   paintGlobe(buf, cx, cy, {
-    r, frame: F, ramps: [SEA, SHALLOWS, FIELD, FOREST, WHEAT, UPLAND, SNOW], bump: 1.0, soft: 0.6, ambient: 0.1,
+    r, frame: F, ramps: [SEA, SHALLOWS, FIELD, FOREST, WHEAT, UPLAND, SNOW], bump: 0.85, soft: 0.6, ambient: 0.1,
     cloud: { ramp: CLOUD, shadow: 0.34, reach: 3 },
     air: { rim: [0xb4e6e0, 0x4f9cc0], haze: [0x3f8ab0, 0x234272], reach: 5.5, strength: 1.05 },
     nightRim: 0x1f3660,
@@ -51,16 +51,16 @@ export function paintMarrow(buf: PixelBuf, cx: number, cy: number): void {
         s.gloss = 0.9;
       } else {
         const wet = fbm(px * 2.6 + 15, py * 2.6 + 25, pz * 2.6 + 35, 4);
-        s.h = land * 8;
-        if (land > 0.13) {
+        s.h = land * 5;
+        if (land > 0.17) {
           // uplands: bare ridges, snow on the tops
-          const crest = ridge(px * 7 + 1, py * 7 + 2, pz * 7 + 3, 3), up = step(0.13, 0.18, land);
-          s.h += (crest * 5 + (land - 0.13) * 30) * up;
-          if (land + crest * 0.05 > 0.235) { s.mat = M_SNOW; s.tone = 1; }
+          const crest = ridge(px * 7 + 1, py * 7 + 2, pz * 7 + 3, 3), up = step(0.17, 0.22, land);
+          s.h += (crest * 5 + (land - 0.17) * 22) * up;
+          if (land + crest * 0.06 > 0.3) { s.mat = M_SNOW; s.tone = 1; }
           else { s.mat = M_UPLAND; s.tone = 0.85 + crest * 0.25 + grain * 0.12; }
         } else if (land < 0.006) {
           s.mat = M_WHEAT; s.tone = 1.1; // beaches
-        } else if (wet > 0.44 && land < 0.1) {
+        } else if (wet > 0.42 && land < 0.145) {
           // farmland: a patchwork of fields, squared off along the lines of latitude
           const lon = Math.atan2(px, pz), la = Math.asin(clamp(py * 0.5 + 0.5) * 2 - 1);
           const skew = fbm(px * 3 + 9, py * 3 + 9, pz * 3 + 9, 2) - 0.5;

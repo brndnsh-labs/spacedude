@@ -30,7 +30,7 @@ export function paintOssa(buf: PixelBuf, cx: number, cy: number): void {
   const rift = at(0.28, -0.12), storm = at(-0.2, 0.4), erg = at(0.5, 0.3);
 
   paintGlobe(buf, cx, cy, {
-    r, frame: F, ramps: [DUNE, RUST, BASALT, SALT], bump: 0.9, soft: 0.62, ambient: 0.09, gain: 0.9,
+    r, frame: F, ramps: [DUNE, RUST, BASALT, SALT], bump: 0.9, soft: 0.62, ambient: 0.09, gain: 0.82,
     cloud: { ramp: DUST, shadow: 0.3, reach: 4 },
     air: { rim: [0xf8cf98, 0xd98a5c], haze: [0xa8584c, 0x6a3248], reach: 4.5, strength: 0.95 },
     nightRim: 0x3d2238,
@@ -108,9 +108,6 @@ export function paintOssa(buf: PixelBuf, cx: number, cy: number): void {
         tone = 0.95 + grain * 0.2;
       } else if (lat < -0.85 + edge) {
         tone *= 1.1;
-      } else if (elev + grain * 0.04 < 0.3 && mat !== M_BASALT) {
-        mat = M_SALT;
-        tone = 0.78 + (0.3 - elev) * 2.5 + streak * 0.3;
       }
 
       // dust storms: pale streaks lifted off the plains
